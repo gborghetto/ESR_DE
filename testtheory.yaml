@@ -9,7 +9,6 @@ likelihood:
   sn.union3: null
 params:
   omk: 0.
-  theta_i: 0.0001
     # prior:
     #   min: 0.0001
     #   max: 0.01
@@ -43,7 +42,7 @@ params:
       loc: 66.0
       scale: 0.1
     proposal: 0.05
-  mnu: 0.06
+  # mnu: 0.06
   # Example quintessence/theory parameters
   phi_init: 1.0
   phidot_init: 0.0
