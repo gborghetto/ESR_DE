@@ -3,25 +3,26 @@
 import numpy as np
 from scipy.integrate import quad
 from cobaya.theory import Theory
+import cobaya
 from .solver import QuintessenceSolver
 
 # Speed of light in km/s
 _c_km_s = 299792.458
 
-def Vphi(phi, params):
+def Vphi(phi, **kwargs):
     """
     Example potential function V(phi).
     This can be modified to implement different quintessence potentials.
     """
     # Example: simple quadratic potential
-    m = params.get('m', 1e-33)  # mass scale in eV
+    m = kwargs.get('m', 1e-33)  # mass scale in eV
     return 0.5 * m**2 * phi**2
 
-def dVphi_dphi(phi, params):
+def dVphi_dphi(phi, **kwargs):
     """
     Derivative of the potential function V(phi).
     """
-    m = params.get('m', 1e-33)  # mass scale in eV
+    m = kwargs.get('m', 1e-33)  # mass scale in eV
     return m**2 * phi
 
 class QuintessenceTheory(Theory):
@@ -35,66 +36,30 @@ class QuintessenceTheory(Theory):
     omega_r = 9e-5  # Default radiation density if not provided
 
     def initialize(self):
-        """Nothing to do until provider is available"""
-        pass
+        """Create a pool to collect redshifts from all likelihoods."""
+        self.z_pool = set()
 
     def initialize_with_provider(self, provider):
         """
         Called after all other components are initialized.
         We build the quintessence solver using sampled parameters.
         """
-        self.provider = provider
-        # helper to read parameters with alternative common names
-        def P(name, default=None):
-            # try provider.get_param for a single name; allow common aliases
-            aliases = {
-                'H0': ['H0', 'h', 'H_0','Hubble'],
-                'Omega_m': ['Omega_m', 'omegam', 'Omega_m0'],
-                'Omega_r': ['Omega_r', 'omegar', 'Omega_r0'],
-                'Omega_k': ['Omega_k', 'omk', 'Omega_k0'],
-                'phi_init': ['phi_init', 'theta_i', 'phi0'],
-                'phidot_init': ['phidot_init', 'phidot0'],
-                'm': ['m'],
-            }
-            if name in aliases:
-                for a in aliases[name]:
-                    try:
-                        return provider.get_param(a)
-                    except Exception as e:
-                        print(f"DEBUG: Failed to get param '{a}'. Reason: {e}")
-                        pass
-                return default
-            try:
-                return provider.get_param(name)
-            except Exception:
-                return default
+        print("provider in initialize_with_provider:", provider)
+        super().initialize_with_provider(provider)
+        # self.provider = provider
 
-        # redshifts sent by likelihoods will be handled dynamically
-        H0_val = P('H0')
-        print("H0_val in QuintessenceTheory:", H0_val)
-        if H0_val is None:
-            # try to build H0 from h and H0=100*h
-            hval = P('h')
-            if hval is not None:
-                H0_val = 100.0 * hval
+        # # Get the other parameters directly. Cobaya ensures they exist if they are in get_requirements.
+        # ombh2 = self.provider.get_param('ombh2')
+        # omch2 = self.provider.get_param('omch2')
+        # omk_val = self.provider.get_param('omk')
+        # phi_init_val = self.provider.get_param('phi_init')
+        # phidot_init_val = self.provider.get_param('phidot_init')
+        # m_val = self.provider.get_param('m')
+        # H0_val = self.provider.get_param('H0')
+        # omegam_val = (ombh2 + omch2) / (H0_val / 100.0)**2
 
-        self.solver = QuintessenceSolver(
-            H0=float(H0_val),
-            Omega_m=float(P('Omega_m', 0.3)),
-            Omega_r=float(P('Omega_r', 0.0)),
-            Omega_k=float(P('Omega_k', 0.0)),
-            phi_init=float(P('phi_init', 1.0)),
-            phidot_init=float(P('phidot_init', 0.0)),
-            V_base=Vphi,
-            dV_base_dphi=dVphi_dphi,
-            V_params={'m': P('m', 1e-33)},
-            z_init=float(P('z_init', 1e2)),
-            A_min=float(P('A_min', 1e-10)),
-            A_max=float(P('A_max', 1e10)),
-            atol=float(P('atol', 1e-10)),
-            rtol=float(P('rtol', 1e-10)),
-            verbose=False,
-        )
+         # Initialize the solver
+
 
     def get_requirements(self):
         """
@@ -109,33 +74,121 @@ class QuintessenceTheory(Theory):
             'omch2': None,   # <-- ADD THIS
             'ombh2': None,   # <-- AND ADD THIS
         }
-
+    
     def must_provide(self, **requirements):
         """
-        Conditionally declare further requirements if specific observables are requested.
-        Here, no extra conditional inputs beyond z.
+        Collect all redshift arrays 'z' requested by likelihoods.
         """
-        provides = {}
-        if 'H' in requirements:
-            provides['z'] = None
-        if 'comoving_AngularDistance' in requirements or 'luminosity_distance' in requirements:
-            provides['z'] = None
-        return provides
+        # It's still good practice to call the parent method first.
+        super().must_provide(**requirements)
+
+        # Look inside each requirement for a 'z' key.
+        for req_name, req_options in requirements.items():
+            if isinstance(req_options, dict) and 'z' in req_options:
+                # Add the requested redshifts to our pool.
+                self.z_pool.update(req_options['z'])
+
+        # This method returns further requirements for OTHER components.
+        # Since we have none, we return an empty dictionary.
+        return {}
+    
+    # def must_provide(self, **requirements):
+
+    #     super().must_provide(**requirements)
+
+    #     # for k
+
+    #     # ====================================================================
+    #     # DEBUGGING BLOCK: This will print what likelihoods are asking for.
+    #     print("\n" + "="*50)
+    #     print(f"DEBUG: Inside must_provide for '{self.get_name()}'")
+    #     print(f"DEBUG: Received requirement keys: {list(requirements.keys())}")
+    #     # ====================================================================
+
+    #     needs = {}
+    #     # Define the quantities that require a redshift array 'z'.
+    #     # We will check against the requirement keys printed above.
+    #     z_dependent_quantities = {'Hubble', 'angular_diameter_distance', 'luminosity_distance', 'rdrag'}
+
+    #     # Check if any of the requested quantities need 'z'.
+    #     if any(q in requirements for q in z_dependent_quantities):
+    #         print("DEBUG: Found a z-dependent quantity! Requesting 'z'.")
+    #         needs['z'] = None
+    #     else:
+    #         print("DEBUG: NO z-dependent quantity found. Not requesting 'z'.")
+        
+    #     print(f"DEBUG: Returning needs dictionary: {needs}")
+    #     print("="*50 + "\n")
+        
+    #     return needs
+
+    # def must_provide(self, **requirements):
+    #     """
+    #     Declare that if a z-dependent quantity is requested, we need 'z'.
+    #     """
+    #     # This dictionary will store our conditional requirements.
+    #     needs = {}
+    #     # Define all the quantities that depend on redshift 'z'.
+    #     z_dependent_quantities = {'H', 'angular_diameter_distance', 'luminosity_distance'}
+
+    #     # Check if any of the requested quantities are in our z-dependent list.
+    #     if any(q in requirements for q in z_dependent_quantities):
+    #         needs['z'] = None
+            
+    #     return needs
+
+    # def must_provide(self, **requirements):
+    #     """
+    #     Conditionally declare further requirements if specific observables are requested.
+    #     Here, no extra conditional inputs beyond z.
+    #     """
+    #     provides = {}
+    #     if 'Hubble' in requirements:
+    #         provides['z'] = None
+    #     if 'angular_diameter_distance' in requirements or 'luminosity_distance' in requirements:
+    #         provides['z'] = None
+    #     return provides
 
     def get_can_provide(self):
         """List of quantities this theory can compute"""
         return ['Hubble', 'angular_diameter_distance', 'luminosity_distance', 'rdrag']
 
-# In QuintessenceTheory class
 
     def calculate(self, state, want_derived=False, **params_values_dict):
         """
-        Compute raw observables and store in state.
+        Compute observables using the collected pool of redshifts.
         """
-        z = np.atleast_1d(state['z'])
+        # 1. Get the unique, sorted redshifts from the pool.
+        z = np.sort(list(self.z_pool))
+
+        # 2. IMPORTANT: Put the redshift array back into the state for the
+        #    likelihoods to use.
+        state['z'] = z
         
+        # 3. Proceed with your calculations as before, using this 'z' array.
+        ombh2 = self.provider.get_param('ombh2')
         # Get ombh2 from the provider
         ombh2 = self.provider.get_param('ombh2')
+        H0 = self.provider.get_param('H0')
+        omch2 = self.provider.get_param('omch2')
+        omegam= (ombh2 + omch2) / (H0 / 100.0)**2
+        omk = self.provider.get_param('omk')
+        phi_init = self.provider.get_param('phi_init')
+        phidot_init = self.provider.get_param('phidot_init')
+        m = self.provider.get_param('m')
+
+        self.solver = QuintessenceSolver(
+            H0=H0,
+            Omega_m=omegam,
+            Omega_r=0.0,  # Using a default fixed value for radiation
+            Omega_k=omk,
+            phi_init=phi_init,
+            phidot_init=phidot_init,
+            V_base=Vphi,
+            dV_base_dphi=dVphi_dphi,
+            V_kwargs={'m': m},
+            # Add other solver params like z_init, atol, etc. if needed
+        )
 
         # --- Calculate H(z) and Distances (your existing code) ---
         sec_per_Gyr = 3.1536e16

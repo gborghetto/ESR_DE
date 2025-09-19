@@ -22,6 +22,7 @@ class QuintessenceSolver:
         rtol = 1e-10,
         verbose = True, 
         tune_amplitude_flag=True,      
+        V_kwargs = {},      # Additional kwargs for the potential function
     ):
         """
         Class to solve the background cosmological equations of motion for a Quintessence potential.
@@ -59,6 +60,7 @@ class QuintessenceSolver:
         """    
     
 
+
         # Store cosmological parameters
         self.H0 = H0
         # Convert H0 → 1/Gyr
@@ -83,6 +85,7 @@ class QuintessenceSolver:
         # Potential functions
         self.V_base = V_base
         self.dV_base_dphi = dV_base_dphi
+        self.V_kwargs = V_kwargs    
 
         # Placeholder for tuned amplitude and solution
         self.solution = None
@@ -102,13 +105,14 @@ class QuintessenceSolver:
         else:
             self.amplitude  = 1.0
             self.solution = None
+
     
 
     def Vphi(self, phi):
-        return self.amplitude * self.V_base(phi)
+        return self.amplitude * self.V_base(phi, **self.V_kwargs)
 
     def dV_dphi(self, phi):
-        return self.amplitude * self.dV_base_dphi(phi)
+        return self.amplitude * self.dV_base_dphi(phi,**self.V_kwargs)
 
     def H_of(self, phi, phidot, z):
         rho_phi = 0.5 * phidot**2 + self.Vphi(phi)
