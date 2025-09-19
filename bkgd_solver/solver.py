@@ -1,6 +1,6 @@
 from functools import partial
 import numpy as np
-from scipy.integrate import solve_ivp
+from scipy.integrate import solve_ivp, quad
 from scipy.optimize import brentq
 from scipy.interpolate import interp1d, UnivariateSpline
 
@@ -59,8 +59,6 @@ class QuintessenceSolver:
             If True, print tuning information (default: True).
         """    
     
-
-
         # Store cosmological parameters
         self.H0 = H0
         # Convert H0 → 1/Gyr
@@ -96,6 +94,9 @@ class QuintessenceSolver:
 
         self.verbose = verbose
 
+        # Speed of light in km/s
+        self.c_km_s = 299792.458
+
         # Automatically tune on init
         if tune_amplitude_flag:
         # if self.amplitude is None:
@@ -105,8 +106,6 @@ class QuintessenceSolver:
         else:
             self.amplitude  = 1.0
             self.solution = None
-
-    
 
     def Vphi(self, phi):
         return self.amplitude * self.V_base(phi, **self.V_kwargs)
@@ -279,6 +278,85 @@ class QuintessenceSolver:
         """ Return the Hubble parameter at redshift z """
         z_arr = z if z is not None else self.solution['z']
         return self.H_of_N(self.z_to_N(z_arr))
+
+    def comoving_distance(self, z):
+        """
+        Calculate comoving distance to redshift z in Mpc.
+        
+        Parameters:
+        z : float or array
+            Redshift(s)
+            
+        Returns:
+        float or array: Comoving distance in Mpc
+        """
+        z = np.atleast_1d(z)
+        distances = []
+        
+        for z_i in z:
+            def integrand(z_prime):
+                # Convert H from Gyr^-1 to km/s/Mpc units
+                H_z_prime_Gyr = float(np.atleast_1d(self.H_of_z(z_prime))[0])
+                # Convert Gyr^-1 to km/s/Mpc: 1 Gyr^-1 = (3.0857e19 km) / (3.1536e16 s) km/s/Mpc
+                H_z_prime_kmsMpc = H_z_prime_Gyr * (3.0857e19 / 3.1536e16)
+                return self.c_km_s / H_z_prime_kmsMpc
+            
+            result, _ = quad(integrand, 0, z_i, epsabs=1e-8, epsrel=1e-8)
+            distances.append(result)
+        
+        distances = np.array(distances)
+        return distances[0] if len(distances) == 1 else distances
+
+    def angular_diameter_distance(self, z):
+        """
+        Calculate angular diameter distance to redshift z in Mpc.
+        
+        Parameters:
+        z : float or array
+            Redshift(s)
+            
+        Returns:
+        float or array: Angular diameter distance in Mpc
+        """
+        z = np.atleast_1d(z)
+        dc = self.comoving_distance(z)
+        
+        if abs(self.Omega_k) < 1e-10:  # Flat universe
+            dk = dc
+        elif self.Omega_k > 0:  # Open universe
+            sqrtOk = np.sqrt(self.Omega_k)
+            dh = self.c_km_s / self.H0  # Hubble distance in Mpc
+            dk = dh / sqrtOk * np.sinh(sqrtOk * dc / dh)
+        else:  # Closed universe
+            sqrtOk = np.sqrt(-self.Omega_k)
+            dh = self.c_km_s / self.H0  # Hubble distance in Mpc
+            dk = dh / sqrtOk * np.sin(sqrtOk * dc / dh)
+        
+        # Angular diameter distance
+        da = dk / (1 + z)
+        
+        return da[0] if len(da) == 1 else da
+
+    def luminosity_distance(self, z):
+        """
+        Calculate luminosity distance to redshift z in Mpc.
+        
+        Parameters:
+        z : float or array
+            Redshift(s)
+            
+        Returns:
+        float or array: Luminosity distance in Mpc
+        """
+        z = np.atleast_1d(z)
+        da = self.angular_diameter_distance(z)
+        
+        # Luminosity distance
+        dl = da * (1 + z)**2
+        
+        return dl[0] if len(dl) == 1 else dl
+
+
 
 
 class QuintessenceSpline(QuintessenceSolver):

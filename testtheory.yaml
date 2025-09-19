@@ -1,12 +1,14 @@
 theory:
-  theory.Quintessence.QuintessenceTheory:
+  bkgd_solver.cobaya_interface_claude.QuintessenceTheory:
     python_path: '.'
+    stop_at_error: True
 likelihood:
   like_ombh2:
     external: "lambda _self: stats.norm.logpdf(_self.provider.get_param('ombh2'), loc=0.02218, scale=0.0006)"
     requires: ombh2
   bao.desi_dr2.desi_bao_all: null
-  sn.union3: null
+  sn.union3: 
+    stop_at_error: True
 params:
   omk: 0.
     # prior:
@@ -44,9 +46,9 @@ params:
     proposal: 0.05
   # mnu: 0.06
   # Example quintessence/theory parameters
-  phi_init: 1.0
+  phi_init: 0.
   phidot_init: 0.0
-  m: 1e-33
+  lambda_phi: 1.
   chi2__BAO:
     latex: \chi^2_\mathrm{BAO}
     derived: true
@@ -64,10 +66,9 @@ sampler:
     drag: false
     oversample_power: 0.4
     proposal_scale: 1.9
-    covmat: ./base_plikHM_TTTEEE_lowl_lowE_lensing_post_BAO.covmat
     Rminus1_stop: 0.1
     Rminus1_cl_stop: 0.2
-    max_tries: 1000
+    max_tries: 100
     max_samples: 20000
   # polychord:
   #   nlive: 25d
