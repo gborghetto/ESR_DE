@@ -15,7 +15,7 @@ class QuintessenceSolver:
         phidot_init,        # Initial _phi̇ at early time
         V_base,             # Base potential function V_base(phi)
         dV_base_dphi,       # Derivative of base potential
-        z_init=1e2,         # Starting redshift
+        z_init=1e6,         # Starting redshift
         A_min = 1e-10,
         A_max = 1e10,  
         atol = 1e-10,
@@ -201,7 +201,7 @@ class QuintessenceSolver:
         if self.verbose:
             print(f"Tuned amplitude: {self.amplitude:.3e}, converged: {res.converged}")
 
-    def _solve_evolution(self, num_points=500):
+    def _solve_evolution(self, num_points=1000):
         """ Solve the equations of motion for _phi and _phi̇ after tuning the amplitude """
         N_vals = np.linspace(self.N_init, 0.0, num_points)
         sol = solve_ivp(
@@ -274,10 +274,33 @@ class QuintessenceSolver:
         p = 0.5 * phidot**2 - self.Vphi(phi)
         return p / rho
 
+    # def H_of_z(self, z=None):
+    #     """ Return the Hubble parameter at redshift z """
+    #     z_arr = z if z is not None else self.solution['z']
+    #     return self.H_of_N(self.z_to_N(z_arr))
+    
     def H_of_z(self, z=None):
-        """ Return the Hubble parameter at redshift z """
-        z_arr = z if z is not None else self.solution['z']
-        return self.H_of_N(self.z_to_N(z_arr))
+        """ 
+        Return the Hubble parameter at redshift z.
+        Uses an analytical approximation for z > z_init.
+        """
+        z_arr = np.atleast_1d(z)
+        result = np.empty_like(z_arr, dtype=float)
+
+        # Create a boolean mask to separate high-z and low-z points
+        mask_high_z = z_arr > self.z_init
+
+        # Analytical part for z > z_init (Radiation-dominated era)
+        if np.any(mask_high_z):
+            z_high = z_arr[mask_high_z]
+            result[mask_high_z] = self.H0_Gyr * np.sqrt(self.Omega_r) * (1 + z_high)**2
+
+        # Numerical part for z <= z_init (using the ODE solution)
+        if np.any(~mask_high_z):
+            z_low = z_arr[~mask_high_z]
+            result[~mask_high_z] = self.H_of_N(self.z_to_N(z_low))
+        
+        return result[0] if len(result) == 1 else result
 
     def comoving_distance(self, z):
         """

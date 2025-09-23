@@ -20,7 +20,8 @@ from cobaya.theory import Theory
 from cobaya.tools import check_2d, combine_1d, combine_2d, deepcopy_where_possible
 import cobaya
 from .solver import QuintessenceSolver
-
+import warnings
+warnings.filterwarnings("ignore", category=UserWarning, module="scipy.integrate.quad")
 
 # Result collector
 class Collector(NamedTuple):
@@ -32,6 +33,7 @@ class Collector(NamedTuple):
 
 # Speed of light in km/s
 _c_km_s = 299792.458
+_T_CMB = 2.73 # CMB temperature in K
 
 def Vphi(phi, **kwargs):
     """
@@ -56,7 +58,6 @@ class QuintessenceTheory(Theory):
       - comoving_AngularDistance(z)
       - luminosity_distance(z)
     """
-    _must_provide: dict
     path: str
     omega_r = 9e-5  # Default radiation density if not provided
     solver: QuintessenceSolver
@@ -66,18 +67,22 @@ class QuintessenceTheory(Theory):
         self.collectors = {}
         # Additional input parameters (e.g. to pass to setter function, to set as attr...)
         self._must_provide = {}
+        # Flag to track if solver has been initialized
+        self._solver_initialized = False
 
     def set_collector_with_z_pool(self, k, zs, method, args=(), kwargs=empty_dict, d=1):
         """
         Creates a collector for a z-dependent quantity, keeping track of the pool of z's.
         """
-        print(f"Setting collector for {k} with zs={zs}")
-        if k in self.collectors:
-            z_pool = self.collectors[k].z_pool
-            z_pool.update(zs)
-        else:
-            Pool = {1: Pool1D, 2: Pool2D}[d]
-            z_pool = Pool(zs)
+        # print(f"Setting collector for {k} with {len(zs)} z-values from {zs.min():.3f} to {zs.max():.3f}")
+        
+        # Convert to numpy array for easier manipulation
+        zs = np.atleast_1d(zs)
+        
+        # Always create a fresh pool for this quantity with the provided z-values
+        Pool = {1: Pool1D, 2: Pool2D}[d]
+        z_pool = Pool(zs)
+            
         if d == 1:
             kwargs_with_z = {"z": z_pool.values}
         else:
@@ -136,36 +141,11 @@ class QuintessenceTheory(Theory):
     def initialize_with_provider(self, provider):
         """
         Called after all other components are initialized.
-        We build the quintessence solver using sampled parameters.
+        Store the provider for later use in calculate method.
         """
-        self.provider = provider
-
-        # Get all necessary parameters directly from the provider.
-        # This will now work because the super() call is removed.
-        ombh2 = self.provider.get_param('ombh2')
-        omch2 = self.provider.get_param('omch2')
-        H0 = self.provider.get_param('H0')
-        omk = self.provider.get_param('omk')
-        phi_init = self.provider.get_param('phi_init')
-        phidot_init = self.provider.get_param('phidot_init')
-        lambda_phi = self.provider.get_param('lambda_phi')
-
-        # Calculate derived Omega_m
-        omegam = (ombh2 + omch2) / (H0 / 100.0)**2
-
-        # Create the solver using the retrieved parameters
-        self.solver = QuintessenceSolver(
-            H0=H0,
-            Omega_m=omegam,
-            Omega_r=0.0,
-            Omega_k=omk,
-            phi_init=phi_init,
-            phidot_init=phidot_init,
-            V_base=Vphi,
-            dV_base_dphi=dVphi_dphi,
-            V_kwargs={'lambda_phi': lambda_phi},
-        )
-
+        # print("Provider in initialize_with_provider called")
+        super().initialize_with_provider(provider)
+        # Don't initialize solver here - do it in calculate method when parameters are available
 
     def get_requirements(self):
         """
@@ -182,33 +162,123 @@ class QuintessenceTheory(Theory):
         }
     
     def must_provide(self, **requirements):
+        """
+        Store requirements for later processing once solver is initialized
+        """
         super().must_provide(**requirements)
+        
+        # Store requirements to process later when solver is available
+        self._must_provide.update(requirements)
 
-        # Since self.solver now exists, this loop will work correctly
+    def _setup_collectors(self):
+        """
+        Setup collectors once solver is initialized
+        """
+        # Collect ALL z-values needed by ANY quantity
+        all_z_values = []
         for k, v in self._must_provide.items():
-            if k == "Hubble":
-                # Note: Your solver must have a method named H_of_z
-                self.set_collector_with_z_pool(k, v["z"], self.solver.H_of_z)
-            elif k == "angular_diameter_distance":
-                # Note: Your solver must have a method named angular_diameter_distance
-                self.set_collector_with_z_pool(k, v["z"], self.solver.angular_diameter_distance)
-            elif k == "luminosity_distance":
-                # Note: Your solver must have a method named luminosity_distance
-                 self.set_collector_with_z_pool(k, v["z"], self.solver.luminosity_distance)
-            # You don't need to handle rdrag here as it's not z-dependent
+            if k in ["Hubble", "angular_diameter_distance", "luminosity_distance"]:
+                z_requested = np.atleast_1d(v["z"])
+                all_z_values.extend(z_requested)
+        
+        # Create a unified z-pool that includes ALL requested z-values
+        if all_z_values:
+            all_z_unique = np.unique(np.array(all_z_values))
+            # print(f"Creating unified z-pool with z-values: {all_z_unique}")
+            
+            # Set up collectors using the unified z-pool
+            for k, v in self._must_provide.items():
+                if k == "Hubble":
+                    self.set_collector_with_z_pool(k, all_z_unique, self._interpolated_H_of_z)
+                elif k == "angular_diameter_distance":
+                    self.set_collector_with_z_pool(k, all_z_unique, self._interpolated_angular_diameter_distance)
+                elif k == "luminosity_distance":
+                    self.set_collector_with_z_pool(k, all_z_unique, self._interpolated_luminosity_distance)
+
+    def _interpolated_H_of_z(self, z):
+        """Wrapper that handles interpolation for H(z)"""
+        z = np.atleast_1d(z)
+        result = []
+        for z_i in z:
+            result.append(self.solver.H_of_z(z_i))
+        return np.array(result)
+
+    def _interpolated_angular_diameter_distance(self, z):
+        """Wrapper that handles interpolation for angular diameter distance"""
+        z = np.atleast_1d(z)
+        result = []
+        for z_i in z:
+            result.append(self.solver.angular_diameter_distance(z_i))
+        return np.array(result)
+
+    def _interpolated_luminosity_distance(self, z):
+        """Wrapper that handles interpolation for luminosity distance"""
+        z = np.atleast_1d(z)
+        result = []
+        for z_i in z:
+            result.append(self.solver.luminosity_distance(z_i))
+        return np.array(result)
     
     def get_can_provide(self):
         """List of quantities this theory can compute"""
-        return ['Hubble', 'angular_diameter_distance', 'luminosity_distance', 'rdrag']
+        return ['Hubble', 'angular_diameter_distance', 'luminosity_distance']
 
+    def get_can_provide_params(self):
+        """List of derived parameters this theory can compute"""
+        return ['rdrag']
+
+    def _initialize_solver(self, **params_values_dict):
+        """
+        Initialize the solver with current parameter values
+        """
+        # Get parameters from the current parameter dict
+        ombh2 = params_values_dict['ombh2']
+        omch2 = params_values_dict['omch2']
+        H0 = params_values_dict['H0']
+        omk = params_values_dict['omk']
+        phi_init = params_values_dict['phi_init']
+        phidot_init = params_values_dict['phidot_init']
+        lambda_phi = params_values_dict['lambda_phi']
+
+        # Calculate derived Omega_m
+        omegam = (ombh2 + omch2) / (H0 / 100.0)**2
+
+
+        # omegar*h^2 = 3 / (4 * 31500) 
+        omrh2 = (3 / (4 * 31500)) * (_T_CMB / 2.73)**4  # Radiation density parameter times h^2
+        omegar = omrh2 / (H0 / 100.0)**2 
+
+        # CREATE THE SOLVER HERE
+        self.solver = QuintessenceSolver(
+            H0=H0,
+            Omega_m=omegam,
+            Omega_r=omegar,
+            Omega_k=omk,
+            phi_init=phi_init,
+            phidot_init=phidot_init,
+            V_base=Vphi,
+            dV_base_dphi=dVphi_dphi,
+            V_kwargs={'lambda_phi': lambda_phi},
+            verbose=False
+        )
+
+        # Now setup collectors
+        self._setup_collectors()
+        self._solver_initialized = True
+        # print("Quintessence solver initialized in calculate method.")
 
     def calculate(self, state, want_derived=False, **params_values_dict):
+        # Initialize solver on first call
+        # if not self._solver_initialized:
+        self._initialize_solver(**params_values_dict)
+        
         # Execute all the calculation methods stored in the collectors
         for k, collector in self.collectors.items():
+            # print(f"Calculating {k} using {collector.method} with args={collector.args} and kwargs={collector.kwargs}")
             state[k] = collector.method(**collector.kwargs)
         
         # Calculate rdrag (which is z-independent)
-        ombh2 = self.provider.get_param('ombh2')
+        ombh2 = params_values_dict['ombh2']
         R_baryon_photon = 31500 * ombh2
         def cs_squared(z_prime):
             return (_c_km_s**2) / (3.0 * (1 + R_baryon_photon / (1 + z_prime)))
@@ -218,10 +288,10 @@ class QuintessenceTheory(Theory):
             H_z_prime_kmsMpc = H_z_prime_Gyr * (3.0857e19 / 3.1536e16)
             cs_z_prime = np.sqrt(cs_squared(z_prime))
             return cs_z_prime / H_z_prime_kmsMpc
-        
-        rdrag_val, _ = quad(rdrag_integrand, 1060, np.inf)
-        state['rdrag'] = rdrag_val
 
+        rdrag_val, _ = quad(rdrag_integrand, 1060, 1e8, epsabs=1e-8, epsrel=1e-8)
+        state['derived']['rdrag'] = rdrag_val
+        # print('Calculated rdrag:', rdrag_val)
 
     def get_Hubble(self, z, **kwargs):
         return self._get_z_dependent("Hubble", z)
@@ -234,111 +304,3 @@ class QuintessenceTheory(Theory):
     
     def get_rdrag(self):
         return self.current_state['rdrag']
-
-    # def calculate(self, state, want_derived=False, **params_values_dict):
-    #     """
-    #     Compute observables using the collected pool of redshifts.
-    #     """
-    #     print("CALCULATE method called with state keys:", state.keys())
-
-    #     # # 1. Get the unique, sorted redshifts from the pool.
-    #     # z = np.sort(list(self.z_pool))
-
-    #     for key in state:
-    #         print(f"State key: {key}, Value: {state[key]}")
-        
-    #     # 3. Proceed with your calculations as before, using this 'z' array.
-    #     ombh2 = self.provider.get_param('ombh2')
-    #     # Get ombh2 from the provider
-    #     ombh2 = self.provider.get_param('ombh2')
-    #     H0 = self.provider.get_param('H0')
-    #     omch2 = self.provider.get_param('omch2')
-    #     omegam= (ombh2 + omch2) / (H0 / 100.0)**2
-    #     omk = self.provider.get_param('omk')
-    #     phi_init = self.provider.get_param('phi_init')
-    #     phidot_init = self.provider.get_param('phidot_init')
-    #     lambda_phi = self.provider.get_param('lambda_phi')
-
-    #     self.solver = QuintessenceSolver(
-    #         H0=H0,
-    #         Omega_m=omegam,
-    #         Omega_r=0.0,  # Using a default fixed value for radiation
-    #         Omega_k=omk,
-    #         phi_init=phi_init,
-    #         phidot_init=phidot_init,
-    #         V_base=Vphi,
-    #         dV_base_dphi=dVphi_dphi,
-    #         V_kwargs={'lambda_phi': lambda_phi},
-    #         # Add other solver params like z_init, atol, etc. if needed
-    #     )
-
-
-    #     z_Hubble = self.collectors.get('Hubble').z_pool.values
-    #     z_DA = self.collectors.get('angular_diameter_distance').z_pool.values
-    #     z_DL = self.collectors.get('luminosity_distance').z_pool.values
-
-
-    #     # --- Calculate H(z) and Distances (your existing code) ---
-    #     sec_per_Gyr = 3.1536e16
-    #     km_per_Mpc = 3.0857e19
-    #     H_Gyr = self.solver.H_of_z(z_Hubble)
-    #     H_km_s_Mpc = H_Gyr * (1.0 / sec_per_Gyr) * km_per_Mpc
-
-    #     def inv_H_Mpc(zp):
-    #         Hp_Gyr = float(np.atleast_1d(self.solver.H_of_z(zp))[0])
-    #         Hp = Hp_Gyr * (1.0 / sec_per_Gyr) * km_per_Mpc
-    #         return _c_km_s / Hp
-
-    #     chi_DA = np.array([quad(inv_H_Mpc, 0.0, float(zi))[0] for zi in z_DA])
-    #     DA = chi_DA / (1.0 + z_DA)
-    #     chi_DL = np.array([quad(inv_H_Mpc, 0.0, float(zi))[0] for zi in z_DL])
-    #     DL = chi_DL * (1.0 + z_DL)
-
-    #     # --- NEW: Calculate r_drag ---
-    #     z_drag = 1060  # Approximate drag epoch redshift
-
-    #     # Sound speed squared c_s^2(z) in (km/s)^2, using Eq. 3.5 & 3.6
-    #     # The factor 31500 approximates 3*rho_b0 / (4*rho_g0 * ombh2)
-    #     R_baryon_photon = 31500 * ombh2 
-    #     def cs_squared(z_prime):
-    #         return (_c_km_s**2) / (3.0 * (1 + R_baryon_photon / (1 + z_prime)))
-
-    #     # Integrand for the sound horizon: c_s(z) / H(z)
-    #     def rdrag_integrand(z_prime):
-    #         # We need H(z') in km/s/Mpc, calculated from the solver
-    #         H_z_prime_Gyr = float(np.atleast_1d(self.solver.H_of_z(z_prime))[0])
-    #         H_z_prime = H_z_prime_Gyr * (1.0 / sec_per_Gyr) * km_per_Mpc
-    #         cs_z_prime = np.sqrt(cs_squared(z_prime))
-    #         return cs_z_prime / H_z_prime
-
-    #     # Perform the integration from z_drag to infinity (Eq. 3.4)
-    #     rdrag_val, _ = quad(rdrag_integrand, z_drag, np.inf)
-
-    #     # --- Store all results in the state dictionary ---
-    #     state['Hubble'] = H_km_s_Mpc
-    #     state['angular_diameter_distance'] = DA
-    #     state['luminosity_distance'] = DL
-    #     state['derived']['rdrag'] = rdrag_val # <-- STORE THE RESULT
-
-    #     # if want_derived:
-    #     #     state['derived'] = {}
-
-    # def get_Hubble(self,z,units="km/s/Mpc"):
-    #     """Return H(z) computed in calculate"""
-    #     return self.current_state['Hubble']
-
-    # def get_angular_diameter_distance(self,z):
-    #     """Return angular diameter distance D_A(z)"""
-    #     # print("Requested z in get_angular_diameter_distance:", z)
-    #     res = self.current_state['angular_diameter_distance']
-    #     # print(f"result in get_angular_diameter_distance: {res}")
-    #     return res
-
-    # def get_luminosity_distance(self):
-    #     """Return luminosity distance D_L(z)"""
-    #     return self.current_state['luminosity_distance']
-    
-    # def get_rdrag(self):
-    #     """Return the comoving sound horizon at the drag epoch."""
-    #     # print("Requested rdrag in get_rdrag")
-    #     return self.current_state['derived']['rdrag']
