@@ -112,8 +112,9 @@ def rdrag_integrand(z_prime):
     cs_squared = (_c_km_s**2) / (3.0 * (1 + R_baryon_photon / (1 + z_prime)))
     return np.sqrt(cs_squared) / H_z_prime_kmsMpc
 
-# rdrag_custom, _ = quad(rdrag_integrand, 1060, 1e8, epsabs=1e-8, epsrel=1e-8)
-rdrag_custom = 147.05* (ombh2/0.02236)**(-0.13) * ((ombh2+omch2)/0.1432)**(-0.23)  # in Mpc, for Neff = 3.04 # this needs to be corrected for D.E. evolution
+rdrag_custom, _ = quad(rdrag_integrand, 1060, 1e8, epsabs=1e-8, epsrel=1e-8)
+# rdrag_custom = 147.05* (ombh2/0.02236)**(-0.13) * ((ombh2+omch2)/0.1432)**(-0.23)  # in Mpc, for Neff = 3.04 # this needs to be corrected for D.E. evolution
+print(f"Custom solver rdrag = {rdrag_custom}")
 
 # # --- Calculate 100*theta_star using the custom solver ---
 # z_star = 1089.8
