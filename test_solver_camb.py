@@ -26,14 +26,11 @@ fiducial_params = {
     'ns': 0.965,
 }
 
-print("Comparing solvers with the following fiducial parameters:")
-print(fiducial_params)
-
-
 # ==========================================================================
 # 2. RUN CAMB (using the syntax from your example)
 # ==========================================================================
 print("\n--- Running CAMB with 'QuintessenceModel' model ---")
+camb.set_feedback_level(level=2)
 
 # Use the convenient camb.set_params function
 pars_camb = camb.set_params(
