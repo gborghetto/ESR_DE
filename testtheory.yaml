@@ -6,55 +6,57 @@ theory:
       rdrag: 
         'derived': True
 likelihood:
-  like_ombh2_BBN:
-    external: "lambda _self: stats.norm.logpdf(_self.provider.get_param('ombh2'), loc=0.02218, scale=0.0006)"
-    requires: ombh2
+  cmb_lite_3d:
+    python_path: /Users/amk/Library/CloudStorage/OneDrive-SwanseaUniversity/Codes/VPhi_Q/cmb_lite  
+  # like_ombh2_BBN:
+  #   external: "lambda _self: stats.norm.logpdf(_self.provider.get_param('ombh2'), loc=0.02218, scale=0.0006)"
+  #   requires: ombh2
   bao.desi_dr2.desi_bao_all: null
   sn.union3: null
 params:
   omk: 0.
-  omch2: #1.181949983e-01
+  omch2:
     latex: \Omega_\mathrm{c} h^2
     prior:
-      min: 0.11
-      max: 0.13
+      min: 0.05
+      max: 0.2
     ref:
       dist: norm
-      loc: 0.1184
-      scale: 0.01
-    proposal: 0.0005
-  ombh2: #2.228338732e-02 #0.02228
-    prior:
-      min: 0.021
-      max: 0.023
-    ref:
-      dist: norm
-      loc: 0.022633
+      loc: 0.11985 #0.1184
       scale: 0.001
+    proposal: 0.0001
+  ombh2:
+    prior:
+      min: 0.01
+      max: 0.04
+    ref:
+      dist: norm
+      loc: 0.02223 #0.022633
+      scale: 0.0001
     proposal: 0.0001
     latex: \Omega_\mathrm{b} h^2
   H0: 
     latex: H_0
     prior:
-      min: 55
-      max: 75
+      min: 60
+      max: 72
     ref:
       dist: norm
       loc: 67.0
-      scale: 0.2
+      scale: 0.1
     proposal: 0.05
   # mnu: 0.06
   # Example quintessence/theory parameters
   phi_init: 0.
-  phidot_init: 0.0
-  lambda_phi:
+  phidot_init: 0.
+  lambda_phi: #0.001
     prior:
-      min: 0.001
-      max: 2.0
+      min: 0.
+      max: 2.
     ref:
       dist: norm
-      loc: 0.25
-      scale: 0.1
+      loc: 0.2
+      scale: 0.05
     proposal: 0.05
     latex: \lambda_\phi
   chi2__BAO:
@@ -80,13 +82,14 @@ sampler:
     drag: false
     oversample_power: 0.4
     proposal_scale: 1.9
-    Rminus1_stop: 0.05
-    Rminus1_cl_stop: 0.2
-    max_tries: 100
+    Rminus1_stop: 0.01
+    Rminus1_cl_stop: 0.1
+    max_tries: 1000
     max_samples: 20000
+    covmat: chains/test_solver_exp.covmat
   # polychord:
   #   nlive: 25d
   #   precision_criterion: 0.1
   #   maximise: True
 # output: chains/spline_4_free_pchord
-output: chains/test_solver_exp
+output: chains/test_solver_exp_cmblite_debug

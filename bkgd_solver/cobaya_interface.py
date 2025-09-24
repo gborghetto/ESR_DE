@@ -20,8 +20,16 @@ from cobaya.theory import Theory
 from cobaya.tools import check_2d, combine_1d, combine_2d, deepcopy_where_possible
 import cobaya
 from .solver import QuintessenceSolver
+# from .numba_solver import NumbaOptimizedQuintessenceSolver as QuintessenceSolver
 import warnings
 warnings.filterwarnings("ignore", category=UserWarning, module="scipy.integrate.quad")
+
+# Speed of light in km/s
+_c_km_s = 299792.458
+_T_CMB = 2.73 # CMB temperature in K
+
+# Conversion factor from Gyr^-1 to km/s/Mpc
+_Gyr_inv_to_kms_per_Mpc = 978.46
 
 # Result collector
 class Collector(NamedTuple):
@@ -30,10 +38,6 @@ class Collector(NamedTuple):
     kwargs: dict = {}
     z_pool: PoolND | None = None
     post: Callable | None = None
-
-# Speed of light in km/s
-_c_km_s = 299792.458
-_T_CMB = 2.73 # CMB temperature in K
 
 def Vphi(phi, **kwargs):
     """
@@ -225,7 +229,7 @@ class QuintessenceTheory(Theory):
 
     def get_can_provide_params(self):
         """List of derived parameters this theory can compute"""
-        return ['rdrag']
+        return ['rdrag','thetastar']
 
     def _initialize_solver(self, **params_values_dict):
         """
@@ -245,8 +249,9 @@ class QuintessenceTheory(Theory):
 
 
         # omegar*h^2 = 3 / (4 * 31500) 
-        omrh2 = (3 / (4 * 31500)) * (_T_CMB / 2.73)**4  # Radiation density parameter times h^2
-        omegar = omrh2 / (H0 / 100.0)**2 
+        # omrh2 = (3 / (4 * 31500)) * (_T_CMB / 2.73)**4  # Radiation density parameter times h^2
+        # omegar = omrh2 / (H0 / 100.0)**2 
+        omegar = 9e-5  # Fixed radiation density parameter
 
         # CREATE THE SOLVER HERE
         self.solver = QuintessenceSolver(
@@ -265,36 +270,55 @@ class QuintessenceTheory(Theory):
         # Now setup collectors
         self._setup_collectors()
         self._solver_initialized = True
+        return self.solver.success
         # print("Quintessence solver initialized in calculate method.")
 
     def calculate(self, state, want_derived=False, **params_values_dict):
         # Initialize solver on first call
         # if not self._solver_initialized:
-        self._initialize_solver(**params_values_dict)
+        success = self._initialize_solver(**params_values_dict)
         
-        # Execute all the calculation methods stored in the collectors
-        for k, collector in self.collectors.items():
-            # print(f"Calculating {k} using {collector.method} with args={collector.args} and kwargs={collector.kwargs}")
-            state[k] = collector.method(**collector.kwargs)
-        
-        # Calculate rdrag (which is z-independent)
-        ombh2 = params_values_dict['ombh2']
-        R_baryon_photon = 31500 * ombh2
-        def cs_squared(z_prime):
-            return (_c_km_s**2) / (3.0 * (1 + R_baryon_photon / (1 + z_prime)))
-        def rdrag_integrand(z_prime):
-            # We need H(z') from the already-initialized solver
-            H_z_prime_Gyr = float(np.atleast_1d(self.solver.H_of_z(z_prime))[0])
-            H_z_prime_kmsMpc = H_z_prime_Gyr * (3.0857e19 / 3.1536e16)
-            cs_z_prime = np.sqrt(cs_squared(z_prime))
-            return cs_z_prime / H_z_prime_kmsMpc
+        if success:
+            # Execute all the calculation methods stored in the collectors
+            for k, collector in self.collectors.items():
+                # print(f"Calculating {k} using {collector.method} with args={collector.args} and kwargs={collector.kwargs}")
+                state[k] = collector.method(**collector.kwargs)
+                # print("State key:", k, "Value:", state[k])
+            
+            # Calculate rdrag (which is z-independent)
+            ombh2 = params_values_dict['ombh2']
+            omch2 = params_values_dict['omch2']
 
-        rdrag_val, _ = quad(rdrag_integrand, 1060, 1e8, epsabs=1e-8, epsrel=1e-8)
-        state['derived']['rdrag'] = rdrag_val
-        # print('Calculated rdrag:', rdrag_val)
+            # R_baryon_photon = 31500 * ombh2
+            # def cs_squared(z_prime):
+            #     return (_c_km_s**2) / (3.0 * (1 + R_baryon_photon / (1 + z_prime)))
+            # def rdrag_integrand(z_prime):
+            #     # We need H(z') from the already-initialized solver
+            #     H_z_prime_Gyr = float(np.atleast_1d(self.solver.H_of_z(z_prime))[0])
+            #     H_z_prime_kmsMpc = H_z_prime_Gyr * (3.0857e19 / 3.1536e16)
+            #     cs_z_prime = np.sqrt(cs_squared(z_prime))
+            #     return cs_z_prime / H_z_prime_kmsMpc
 
-    def get_Hubble(self, z, **kwargs):
-        return self._get_z_dependent("Hubble", z)
+            # rdrag_val, _ = quad(rdrag_integrand, 1060, 1e8, epsabs=1e-8, epsrel=1e-8)
+            rdrag_val = 147.05* (ombh2/0.02236)**(-0.13) * ((ombh2+omch2)/0.1432)**(-0.23)  # in Mpc, for Neff = 3.04 # this needs to be corrected for D.E. evolution
+            theta_star_rad = self.solver.compute_theta_star(ombh2, z_star=1089.8)
+            state['derived']['thetastar'] = 100 * theta_star_rad
+            # print(f"100thetastar: {100 * theta_star_rad}, thetastar = {theta_star_rad}")
+
+            state['derived']['rdrag'] = rdrag_val
+            # print('Calculated rdrag:', rdrag_val)
+            return True
+        else:
+            return False
+
+    def get_Hubble(self, z, units="km/s/Mpc", **kwargs):
+        H_kms_mpc = self._get_z_dependent("Hubble", z)
+        if units == "1/Mpc":
+            return H_kms_mpc / _c_km_s
+        elif units == "km/s/Mpc":
+            return H_kms_mpc
+        else:
+            raise ValueError(f"Unknown units for Hubble: {units}")
 
     def get_angular_diameter_distance(self, z, **kwargs):
         return self._get_z_dependent("angular_diameter_distance", z)
@@ -304,3 +328,6 @@ class QuintessenceTheory(Theory):
     
     def get_rdrag(self):
         return self.current_state['rdrag']
+    
+    def get_thetastar(self):
+        return self.current_state['thetastar']

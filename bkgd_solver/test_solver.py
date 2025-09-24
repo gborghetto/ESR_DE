@@ -70,7 +70,7 @@ def main():
 
     phi_init = 0.
     phidot_init = 0.0
-    lambda_phi = 0.1
+    lambda_phi = 1.5
 
     # Initialize solver
     solver = QuintessenceSolver(

@@ -3,6 +3,81 @@ import numpy as np
 from scipy.integrate import solve_ivp, quad
 from scipy.optimize import brentq
 from scipy.interpolate import interp1d, UnivariateSpline
+from numba import jit, vectorize, float64, types
+import os
+from pathlib import Path
+
+@jit(nopython=True)
+def _dydN_jit(N, y, H_func, dV_dphi_func, N_to_z_func):
+    """
+    This is the JIT-compiled version of the ODE system.
+    It takes functions as arguments to avoid using 'self'.
+    """
+    phi, phidot = y
+    z = N_to_z_func(N)
+    H = H_func(phi, phidot, z)
+
+    # A safety check to prevent division by zero
+    if H == 0:
+        return [0.0, 0.0]
+
+    dphi_dN = phidot / H
+    dphidot_dN = -(3 * H * phidot + dV_dphi_func(phi)) / H
+    return [dphi_dN, dphidot_dN]
+
+@jit(nopython=True)
+def Vphi_jit(phi, amplitude, lambda_phi):
+    """JIT-compiled version of the exponential potential."""
+    return amplitude * np.exp(-lambda_phi * phi)
+
+@jit(nopython=True)
+def dV_dphi_jit(phi, amplitude, lambda_phi):
+    """JIT-compiled version of the potential's derivative."""
+    # Re-use the fast Vphi_jit function inside
+    return -lambda_phi * Vphi_jit(phi, amplitude, lambda_phi)
+
+@jit(nopython=True)
+def H_of_jit(phi, phidot, z, H0_Gyr, Omega_m, Omega_r, Omega_k, density_crit0, amplitude, lambda_phi, Omega_nu_z=0.0):
+    """JIT-compiled version of the Hubble parameter calculation."""
+    # Call the already-compiled potential function for efficiency
+    rho_phi = 0.5 * phidot**2 + Vphi_jit(phi, amplitude, lambda_phi)
+    Omega_phi_term = rho_phi / density_crit0
+
+    E2 = (
+        Omega_nu_z + # Neutrino density term from interpolation table
+        Omega_r * (1 + z)**4 +
+        Omega_m * (1 + z)**3 +
+        Omega_k * (1 + z)**2 +
+        Omega_phi_term
+    )
+
+    # Safety check to prevent numerical errors
+    if E2 < 0:
+        return 0.0
+    
+    return H0_Gyr * np.sqrt(E2)
+
+@jit(nopython=True, fastmath=True, cache=True)
+def sound_speed_squared(z, Omega_b_h2):
+    """Compute sound speed squared in baryon-photon fluid"""
+    c_km_s = 299792.458
+    R_baryon_photon = 31500 * Omega_b_h2  # From CMB temperature relation
+    return (c_km_s**2) / (3.0 * (1.0 + R_baryon_photon / (1.0 + z)))
+
+@jit(nopython=True, fastmath=True, cache=True)
+def sound_horizon_integrand(z_array, H_array, Omega_b_h2):
+    """Compute integrand for sound horizon calculation"""
+    c_km_s = 299792.458
+    # Convert H from Gyr^-1 to km/s/Mpc
+    H_kmsMpc = H_array * (3.0857e19 / 3.1536e16)
+    
+    integrand_vals = np.zeros_like(z_array)
+    for i in range(len(z_array)):
+        cs_squared = sound_speed_squared(z_array[i], Omega_b_h2)
+        cs = np.sqrt(cs_squared)
+        integrand_vals[i] = cs / H_kmsMpc[i]
+    
+    return integrand_vals
 
 class QuintessenceSolver:
     def __init__(
@@ -15,14 +90,15 @@ class QuintessenceSolver:
         phidot_init,        # Initial _phi̇ at early time
         V_base,             # Base potential function V_base(phi)
         dV_base_dphi,       # Derivative of base potential
-        z_init=1e6,         # Starting redshift
+        z_init=1e8,         # Starting redshift
         A_min = 1e-10,
         A_max = 1e10,  
-        atol = 1e-10,
-        rtol = 1e-10,
+        atol = 1e-8,
+        rtol = 1e-8,
         verbose = True, 
         tune_amplitude_flag=True,      
         V_kwargs = {},      # Additional kwargs for the potential function
+        neutrino_table_path='neutrino_density_table.txt'  # Path to neutrino density table
     ):
         """
         Class to solve the background cosmological equations of motion for a Quintessence potential.
@@ -68,7 +144,29 @@ class QuintessenceSolver:
         self.Omega_m = Omega_m
         self.Omega_r = Omega_r
         self.Omega_k = Omega_k
-        self.Omega_phi_target = 1.0 - Omega_m - Omega_r - Omega_k
+
+        # --- NEW: Load and interpolate the neutrino density table ---
+        try:
+            solver_directory = Path(__file__).parent
+            # Join this directory with the filename to get the full path.
+            absolute_neutrino_path = solver_directory / "neutrino_density_table.txt"
+            a_table, onuh2_table = np.loadtxt(absolute_neutrino_path, unpack=True)
+            self.a_nu_tab_max = a_table.max()
+            self.a_nu_tab_min = a_table.min()
+            # Use log-space interpolation for better accuracy
+            self._log_onuh2_of_log_a = interp1d(
+                np.log(a_table), np.log(onuh2_table),
+                kind='linear', bounds_error=False, fill_value='extrapolate'
+            )
+            omega_nu_today = self.onuh2_of_z(0) / (self.H0 / 100.0)**2
+            print("Successfully loaded neutrino density table.")
+        except IOError:
+            raise IOError(f"Could not find neutrino data file: {neutrino_table_path}")
+
+        print(f"Calculated Omega_nu today = {omega_nu_today:.5e}, Omega photons = {Omega_r:.5e}")
+
+        self.Omega_phi_target = 1.0 - Omega_m - Omega_r - Omega_k - omega_nu_today
+
 
         # Critical density today in natural units (8πG=1)
         self.density_crit0 = 3 * self.H0_Gyr**2
@@ -100,7 +198,12 @@ class QuintessenceSolver:
         # Automatically tune on init
         if tune_amplitude_flag:
         # if self.amplitude is None:
-            self._tune_amplitude(A_min=A_min, A_max=A_max)
+            try:
+                self._tune_amplitude(A_min=A_min, A_max=A_max)
+                self.success = True
+            except Exception as e:
+                print('Error in tuning', e)
+                self.success = False
         # After tuning, solve evolution
             self._solve_evolution()
         else:
@@ -108,21 +211,48 @@ class QuintessenceSolver:
             self.solution = None
 
     def Vphi(self, phi):
-        return self.amplitude * self.V_base(phi, **self.V_kwargs)
+        """Wrapper that calls the fast, JIT-compiled potential function."""
+        # Get lambda_phi from the kwargs dictionary
+        lambda_phi = self.V_kwargs.get('lambda_phi', 1.0)
+        return Vphi_jit(phi, self.amplitude, lambda_phi)
 
     def dV_dphi(self, phi):
-        return self.amplitude * self.dV_base_dphi(phi,**self.V_kwargs)
+        """Wrapper that calls the fast, JIT-compiled derivative function."""
+        lambda_phi = self.V_kwargs.get('lambda_phi', 1.0)
+        return dV_dphi_jit(phi, self.amplitude, lambda_phi)
+
+    def onuh2_of_z(self, z):
+        """Fast interpolation of the neutrino density."""
+        # Handle z=0 safely, as log(0) is -inf
+        a = np.clip(1.0 / (1.0 + z), self.a_nu_tab_min, self.a_nu_tab_max)
+        result = np.exp(self._log_onuh2_of_log_a(np.log(a)))
+        return result
 
     def H_of(self, phi, phidot, z):
-        rho_phi = 0.5 * phidot**2 + self.Vphi(phi)
-        Omega_phi = rho_phi / self.density_crit0
-        E2 = (
-            self.Omega_r * (1+z)**4 +
-            self.Omega_m * (1+z)**3 +
-            self.Omega_k * (1+z)**2 +
-            Omega_phi
-        )
-        return self.H0_Gyr * np.sqrt(E2)
+        """Wrapper that calls the fast, JIT-compiled H(z) function."""
+        lambda_phi = self.V_kwargs.get('lambda_phi', 1.0)
+        Omega_nu = self.onuh2_of_z(z) / (self.H0 / 100.0)**2
+        return H_of_jit(
+            phi, phidot, z,
+            self.H0_Gyr, self.Omega_m, self.Omega_r, self.Omega_k,
+            self.density_crit0, self.amplitude, lambda_phi, Omega_nu)
+
+    # def Vphi(self, phi):
+    #     return self.amplitude * self.V_base(phi, **self.V_kwargs)
+
+    # def dV_dphi(self, phi):
+    #     return self.amplitude * self.dV_base_dphi(phi,**self.V_kwargs)
+
+    # def H_of(self, phi, phidot, z):
+    #     rho_phi = 0.5 * phidot**2 + self.Vphi(phi)
+    #     Omega_phi = rho_phi / self.density_crit0
+    #     E2 = (
+    #         self.Omega_r * (1+z)**4 +
+    #         self.Omega_m * (1+z)**3 +
+    #         self.Omega_k * (1+z)**2 +
+    #         Omega_phi
+    #     )
+    #     return self.H0_Gyr * np.sqrt(E2)
     
     def N_to_z(self, N):
         # Convert N to z
@@ -136,7 +266,6 @@ class QuintessenceSolver:
         N = np.log(a)
         return N
 
-    # can be jitted
     def _dydN(self, N, y):
         """ System of equations to solve for _phi and _phi̇ """
         phi, phidot = y
@@ -145,6 +274,12 @@ class QuintessenceSolver:
         dphi_dN = phidot / H
         dphidot_dN = -(3*H*phidot + self.dV_dphi(phi)) / H
         return [dphi_dN, dphidot_dN]
+    
+    # def _dydN(self, N, y):
+    #     """
+    #     Wrapper method that calls the fast, Numba-compiled ODE function.
+    #     """
+    #     return _dydN_jit(N, y, self.H_of, self.dV_dphi, self.N_to_z)
 
     def _compute_Omega_phi0(self, logA):
         """ Compute Omega_phi0 for a given log amplitude """
@@ -201,7 +336,7 @@ class QuintessenceSolver:
         if self.verbose:
             print(f"Tuned amplitude: {self.amplitude:.3e}, converged: {res.converged}")
 
-    def _solve_evolution(self, num_points=1000):
+    def _solve_evolution(self, num_points=500):
         """ Solve the equations of motion for _phi and _phi̇ after tuning the amplitude """
         N_vals = np.linspace(self.N_init, 0.0, num_points)
         sol = solve_ivp(
@@ -287,18 +422,23 @@ class QuintessenceSolver:
         z_arr = np.atleast_1d(z)
         result = np.empty_like(z_arr, dtype=float)
 
-        # Create a boolean mask to separate high-z and low-z points
-        mask_high_z = z_arr > self.z_init
+        result = self.H_of_N(self.z_to_N(z_arr))
 
-        # Analytical part for z > z_init (Radiation-dominated era)
-        if np.any(mask_high_z):
-            z_high = z_arr[mask_high_z]
-            result[mask_high_z] = self.H0_Gyr * np.sqrt(self.Omega_r) * (1 + z_high)**2
+        # # Create a boolean mask to separate high-z and low-z points
+        # mask_high_z = z_arr > self.z_init
 
-        # Numerical part for z <= z_init (using the ODE solution)
-        if np.any(~mask_high_z):
-            z_low = z_arr[~mask_high_z]
-            result[~mask_high_z] = self.H_of_N(self.z_to_N(z_low))
+        # # Analytical part for z > z_init (Radiation-dominated era)
+        # if np.any(mask_high_z):
+        #     z_high = z_arr[mask_high_z]
+        #     result[mask_high_z] = self.H0_Gyr * np.sqrt(self.Omega_r) * (1 + z_high)**2
+
+        # # Numerical part for z <= z_init (using the ODE solution)
+        # if np.any(~mask_high_z):
+        #     z_low = z_arr[~mask_high_z]
+        #     result[~mask_high_z] = self.H_of_N(self.z_to_N(z_low))
+
+        # convert to km/s/Mpc
+        result = result * (3.0857e19 / 3.1536e16)  # Gyr⁻¹ to km/s/Mpc
         
         return result[0] if len(result) == 1 else result
 
@@ -316,15 +456,16 @@ class QuintessenceSolver:
         z = np.atleast_1d(z)
         distances = []
         
+        def integrand(z_prime):
+            H_z_prime_kmsMpc = np.atleast_1d(self.H_of_z(z_prime))
+            # # Convert Gyr^-1 to km/s/Mpc: 1 Gyr^-1 = (3.0857e19 km) / (3.1536e16 s) km/s/Mpc
+            # H_z_prime_kmsMpc = H_z_prime_Gyr * (3.0857e19 / 3.1536e16)
+            return self.c_km_s / H_z_prime_kmsMpc
+
         for z_i in z:
-            def integrand(z_prime):
-                # Convert H from Gyr^-1 to km/s/Mpc units
-                H_z_prime_Gyr = float(np.atleast_1d(self.H_of_z(z_prime))[0])
-                # Convert Gyr^-1 to km/s/Mpc: 1 Gyr^-1 = (3.0857e19 km) / (3.1536e16 s) km/s/Mpc
-                H_z_prime_kmsMpc = H_z_prime_Gyr * (3.0857e19 / 3.1536e16)
-                return self.c_km_s / H_z_prime_kmsMpc
-            
-            result, _ = quad(integrand, 0, z_i, epsabs=1e-8, epsrel=1e-8)
+            # result, _ = quad(integrand, 0, z_i, epsabs=1e-8, epsrel=1e-8)
+            z_arr = np.linspace(0, z_i, 1000)
+            result = np.trapz(integrand(z_arr), z_arr)
             distances.append(result)
         
         distances = np.array(distances)
@@ -378,7 +519,58 @@ class QuintessenceSolver:
         dl = da * (1 + z)**2
         
         return dl[0] if len(dl) == 1 else dl
-
+    
+    def compute_sound_horizon(self, z_end, Omega_b_h2):
+        """
+        Compute comoving sound horizon from z_end to infinity
+        
+        Parameters:
+        z_end : float
+            Final redshift (e.g., drag epoch z_d ~ 1060)
+        Omega_b_h2 : float
+            Baryon density parameter Omega_b * h^2
+            
+        Returns:
+        float: Sound horizon in Mpc
+        """
+        # Create integration grid from z_end to high redshift
+        z_max_integration = 1e8  # Integrate to high redshift
+        z_integration = np.logspace(np.log10(z_end), np.log10(z_max_integration), 1000)
+        
+        # Get H(z) values for the integration grid
+        H_integration = np.array([self.H_of_z(z_integration)]).flatten()
+        
+        # Compute integrand
+        integrand_vals = sound_horizon_integrand(z_integration, H_integration, Omega_b_h2)
+        
+        # Integrate using trapezoidal rule
+        sound_horizon = np.trapz(integrand_vals, z_integration)
+        
+        return sound_horizon
+    
+    def compute_theta_star(self, Omega_b_h2, z_star=1089.8):
+        """
+        Compute angular size of sound horizon at recombination (theta_star)
+        
+        Parameters:
+        Omega_b_h2 : float
+            Baryon density parameter Omega_b * h^2
+        z_star : float
+            Redshift of recombination (default: 1089.8)
+            
+        Returns:
+        float: theta_star in radians
+        """
+        # Compute sound horizon at recombination
+        r_star = self.compute_sound_horizon(z_star, Omega_b_h2)
+        
+        # Compute angular diameter distance to recombination
+        D_M_star = self.angular_diameter_distance(z_star)
+        
+        # theta_star = r_star / D_M_star
+        theta_star = r_star / D_M_star
+        
+        return theta_star
 
 
 
