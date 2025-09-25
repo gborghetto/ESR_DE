@@ -222,7 +222,7 @@ if __name__ == "__main__":
     complexity = 6
     # Use a predefined runname from the ESR library that includes sine functions
     runname = "core_maths"
-    esr_functions_file = f'./CambPotential/esrfunctions/{runname}/compl_{complexity}/unique_equations_{complexity}.txt'
+    esr_functions_file = f'./CambESRPotential/esrfunctions/{runname}/compl_{complexity}/unique_equations_{complexity}.txt'
     # potential_function_index = 48  # Index of the ESR function to use
     num_esr_functions = 335
 

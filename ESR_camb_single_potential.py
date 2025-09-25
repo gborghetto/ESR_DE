@@ -23,7 +23,7 @@ def create_cobaya_info_dict(esr_functions_file, potential_function_index, esr_pa
     info = {
         # Theory
         "theory": {
-            "CambPotential.CobayaInterfaceESR.CambQuintessenceESR": 
+            "CambESRPotential.CobayaInterfaceESR.CambQuintessenceESR": 
             {
                 "python_path": '.',
                 "stop_at_error": False,
@@ -180,8 +180,8 @@ if __name__ == "__main__":
     complexity = 6
     # Use a predefined runname from the ESR library that includes sine functions
     runname = "core_maths"
-    esr_functions_file = f'./CambPotential/esrfunctions/{runname}/compl_{complexity}/unique_equations_{complexity}.txt'
-    potential_function_index = 48  # Index of the ESR function to use
+    esr_functions_file = f'./CambESRPotential/esrfunctions/{runname}/compl_{complexity}/unique_equations_{complexity}.txt'
+    potential_function_index = 107  # Index of the ESR function to use
 
     esr_function_string, esr_function_template, esr_param_symbols = load_esr_function_string(esr_functions_file, potential_function_index)
     esr_param_names = [str(p) for p in esr_param_symbols]
@@ -197,8 +197,8 @@ if __name__ == "__main__":
                 "drag": False,
                 "oversample_power": 0.4,
                 "proposal_scale": 1.9,
-                "Rminus1_stop": 0.05,
-                "Rminus1_cl_stop": 0.1,
+                "Rminus1_stop": 0.1,
+                "Rminus1_cl_stop": 0.2,
                 "max_tries": 100,
                 "max_samples": 10000,
             }
