@@ -9,7 +9,7 @@ and a combination of CMB, BAO, and Supernova likelihoods.
 """
 
 from cobaya.run import run
-from CambPotential.CobayaInterfaceESR import load_esr_function_string
+from CambESRPotential.CobayaInterfaceESR import load_esr_function_string
 import argparse
 
 def create_cobaya_info_dict(esr_functions_file, potential_function_index, esr_param_names):
@@ -23,7 +23,7 @@ def create_cobaya_info_dict(esr_functions_file, potential_function_index, esr_pa
     info = {
         # Theory
         "theory": {
-            "CambPotential.CobayaInterfaceESR.CambQuintessenceESR": 
+            "CambESRPotential.CobayaInterfaceESR.CambQuintessenceESR": 
             {
                 "python_path": '.',
                 "stop_at_error": False,
