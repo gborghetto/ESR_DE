@@ -168,7 +168,7 @@ def run_single_potential(esr_functions_file, potential_function_index, resume, t
                 "proposal_scale": 1.9,
                 "Rminus1_stop": 0.1,
                 "Rminus1_cl_stop": 0.2,
-                "max_tries": 200,
+                "max_tries": 100,
                 "max_samples": 10000,
             }
         }
@@ -190,7 +190,7 @@ def run_single_potential(esr_functions_file, potential_function_index, resume, t
     }
     try:
         info.update(minimize_info)
-        updated_info, sampler = run(info, debug=debug,force=False, resume=resume)
+        updated_info, sampler = run(info, debug=debug,force=True, resume=resume)
     except Exception as e:
         print(f"Error during minimization run: {e}")
 
