@@ -3,7 +3,7 @@ import os
 import numpy as np
 from scipy.interpolate import InterpolatedUnivariateSpline
 
-def load_esr_function_string(file_path, idx=0):
+def load_esr_function_string(file_path, idx=0,verbose=False):
     try:
         with open(file_path, "r") as f:
             all_functions = [line.strip() for line in f.readlines() if line.strip()]
@@ -24,8 +24,9 @@ def load_esr_function_string(file_path, idx=0):
 
             # Check if the expression has any parameter symbols
             param_symbols = [sym for sym in expr_template.free_symbols if str(sym).startswith('a')]
-
-            print(f"Loaded ESR function: {func_string} with parameters: {[str(p) for p in param_symbols]}")
+            
+            if verbose:
+                print(f"Loaded ESR function: {func_string} with parameters: {[str(p) for p in param_symbols]}")
 
             return func_string, expr_template, param_symbols
 
