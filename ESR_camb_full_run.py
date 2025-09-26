@@ -186,7 +186,7 @@ def run_single_potential(esr_functions_file, potential_function_index, resume, t
                 "Rminus1_stop": 0.1,
                 "Rminus1_cl_stop": 0.2,
                 "max_tries": 100,
-                "max_samples": 500,
+                "max_samples": 1600,
             }
         }
     }
@@ -201,7 +201,7 @@ def run_single_potential(esr_functions_file, potential_function_index, resume, t
     minimize_info = {"sampler": {
         "minimize": {
             "method": "scipy",
-            "best_of": 16,
+            "best_of": 24,
             }
         }
     }
@@ -237,13 +237,12 @@ if __name__ == "__main__":
     debug = bool(args.debug)
 
     # 1. Set up parameters for function generation
-    complexity = 4
-    # Use a predefined runname from the ESR library that includes sine functions
-    runname = "custom_DE"
+    complexity = 8
+    # Use a predefined runname from the ESR library
+    runname = "core_maths"
     esr_functions_file = f'./CambESRPotential/esrfunctions/{runname}/compl_{complexity}/unique_equations_{complexity}.txt'
-    # potential_function_index = 48  # Index of the ESR function to use
-    num_esr_functions = 335
+    num_esr_functions = 5448
 
     for potential_function_index in range(num_esr_functions):
-        print(f"\n\nRunning potential function index: {potential_function_index}\n")
+        print(f"\n\nRunning potential function index: {potential_function_index} of {num_esr_functions}\n")
         run_single_potential(esr_functions_file, potential_function_index, resume, test, force, debug)

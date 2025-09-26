@@ -12,9 +12,9 @@ import matplotlib.pyplot as plt
 # random.seed(42)
 
 # 1. Set up parameters for function generation
-complexity = 4
+complexity = 8
 # Use a predefined runname from the ESR library that includes sine functions
-runname = "custom_DE"
+runname = "core_maths"
 
 print(f"Generating functions with complexity {complexity} for run '{runname}'...")
 
