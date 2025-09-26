@@ -8,7 +8,7 @@ def is_function_valid(func_string: str) -> bool:
     More robustly analyzes a function string to determine if it's valid.
     """
     # 1. Check for obviously invalid substrings
-    invalid_substrings = ['nan', 'oo', '<class', 'i'] # 'I' is sympy for imaginary unit
+    invalid_substrings = ['nan', 'oo', '<class'] # 'I' is sympy for imaginary unit
     if any(sub in func_string.lower() for sub in invalid_substrings):
         print(f"Validation failed: Function '{func_string}' contains invalid substring.")
         return False

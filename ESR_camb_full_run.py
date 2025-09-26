@@ -237,9 +237,9 @@ if __name__ == "__main__":
     debug = bool(args.debug)
 
     # 1. Set up parameters for function generation
-    complexity = 6
+    complexity = 4
     # Use a predefined runname from the ESR library that includes sine functions
-    runname = "core_maths"
+    runname = "custom_DE"
     esr_functions_file = f'./CambESRPotential/esrfunctions/{runname}/compl_{complexity}/unique_equations_{complexity}.txt'
     # potential_function_index = 48  # Index of the ESR function to use
     num_esr_functions = 335

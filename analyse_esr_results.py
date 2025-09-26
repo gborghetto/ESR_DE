@@ -52,6 +52,7 @@ def analyze_cobaya_runs(base_directory="chains/camb_esr"):
                 potential_index = int(potential_index_str)
                 
                 complexity_dir = p.parent.parent if potential_index_str == p.parent.name else p.parent.parent.parent
+                complexity = int(complexity_dir.name.split('_')[-1])
                 run_name = complexity_dir.parent.name
                 
                 source_id = f"{run_name}/{complexity_dir.name}/{potential_index}"
@@ -59,7 +60,7 @@ def analyze_cobaya_runs(base_directory="chains/camb_esr"):
                 # --- NEW: Load the corresponding function string ---
                 # Assumption: The function file is named 'functions.txt' and lives
                 # in the complexity directory (e.g., .../compl_6/functions.txt)
-                function_file_path = complexity_dir / "unique_equations_6.txt"
+                function_file_path = f'./CambESRPotential/esrfunctions/{run_name}/compl_{complexity}/unique_equations_{complexity}.txt'
                 func_string, _, _ = load_esr_function_string(function_file_path, idx=potential_index)
                 
                 # --- Load the numerical results ---
