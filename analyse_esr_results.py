@@ -94,11 +94,11 @@ def analyze_cobaya_runs(base_directory="chains/camb_esr"):
         return
     
     full_results_df = pd.concat(all_results, ignore_index=True)
-    top_5_results = full_results_df.sort_values(by='chi2_total').head(5)
+    top_10_results = full_results_df.sort_values(by='chi2_total').head(10)
 
     # --- Display the results ---
     print("\n" + "="*120)
-    print("                                     TOP 5 COBAYA MINIMIZATION RESULTS")
+    print("                                     TOP 10 COBAYA MINIMIZATION RESULTS")
     print("="*120)
     
     # Define the base columns we always want to see
@@ -109,23 +109,22 @@ def analyze_cobaya_runs(base_directory="chains/camb_esr"):
     # --- NEW: Dynamically find and add parameter columns ---
     # Find all columns in the results that look like 'a0', 'a1', etc.
     param_columns = sorted([
-        col for col in top_5_results.columns if col.startswith('a') and col[1:].isdigit()
+        col for col in top_10_results.columns if col.startswith('a') and col[1:].isdigit()
     ])
     
     # Add the found parameter columns to our list for display
     display_columns.extend(param_columns)
     # --- END OF NEW LOGIC ---
-    
-    existing_display_columns = [col for col in display_columns if col in top_5_results.columns]
-    
+
+    existing_display_columns = [col for col in display_columns if col in top_10_results.columns]
     pd.set_option('display.max_rows', 10)
     pd.set_option('display.width', 200)
     pd.set_option('display.max_colwidth', None)
     
     # Format floating point columns for better readability
-    float_formatters = {col: '{:.4g}'.format for col in top_5_results.select_dtypes(include='float').columns}
+    float_formatters = {col: '{:.4g}'.format for col in top_10_results.select_dtypes(include='float').columns}
 
-    print(top_5_results[existing_display_columns].to_string(index=False, formatters=float_formatters))
+    print(top_10_results[existing_display_columns].to_string(index=False, formatters=float_formatters))
     print("="*120)
 
 
