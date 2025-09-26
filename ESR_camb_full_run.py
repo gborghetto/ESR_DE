@@ -148,11 +148,37 @@ def create_cobaya_info_dict(esr_functions_file, potential_function_index, esr_pa
     return info
 
 
+def is_function_valid(func_string: str) -> bool:
+    """
+    Analyzes a function string to determine if it's valid for a quintessence potential.
+
+    Args:
+        func_string (str): The mathematical expression as a string.
+        phi_interval (tuple): The physical interval for phi over which to check validity.
+
+    Returns:
+        bool: True if the function is valid, False otherwise.
+    """
+    # 1. Check for obviously invalid substrings before parsing
+    invalid_substrings = ['nan', 'oo', '<class', 'I'] # 'I' is sympy for imaginary unit
+    if any(sub in func_string for sub in invalid_substrings):
+        print(f"Validation failed: Function string '{func_string}' contains invalid substring.")
+        return True
+    else:
+        return False
+
 def run_single_potential(esr_functions_file, potential_function_index, resume, test, force, debug):
     """
     Run a single potential function with the given parameters.
     """
     esr_function_string, esr_function_template, esr_param_symbols = load_esr_function_string(esr_functions_file, potential_function_index)
+    # if function is a constant (does not contain 'x') or the string has nan, skip it
+
+    invalid_function = is_function_valid(esr_function_string)
+    if invalid_function:
+        print(f"Skipping invalid function at index {potential_function_index}: {esr_function_string}")
+        return
+
     esr_param_names = [str(p) for p in esr_param_symbols]
 
     print(f"Using ESR potential function: {esr_function_string}, with parameters: {esr_param_names}")
