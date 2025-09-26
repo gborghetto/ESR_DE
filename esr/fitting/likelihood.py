@@ -520,3 +520,351 @@ class PoissonLikelihood(Likelihood):
             return np.inf
         return nll
     
+## test class for DESI likelihood ##
+
+import numpy as np
+import pandas as pd
+import os
+import warnings
+import sympy
+from scipy.interpolate import interp1d
+from scipy.integrate import cumulative_trapezoid
+
+from esr.fitting.likelihood import Likelihood
+from esr.fitting.sympy_symbols import (
+    square, cube, sqrt, log, pow, x, a0, a1, a2, inv
+)
+
+
+class DESILikelihood(Likelihood):
+    """
+    Likelihood class for DESI BAO measurements
+    
+    This class handles DESI BAO data including DM/rs, DH/rs, and DV/rs measurements.
+    It expects an external background solver to provide H(z) given model parameters.
+    
+    Args:
+        background_solver (callable, optional): External function that computes background evolution
+                                              Should return (z_array, H_z_array) given parameters
+    """
+    
+    def __init__(self, fn_set='core_maths', data_dir=None, background_solver=None):
+        
+        super().__init__(
+            '/DESI/desi_gaussian_bao_ALL_GCcomb_mean.txt',
+            '/DESI/desi_gaussian_bao_ALL_GCcomb_cov.cov', 
+            'DESI',
+            data_dir=data_dir,
+            fn_set = fn_set
+        )
+        
+        # Physical constants
+        self.c_km_s = 299792.458  # km/s
+        self.rd_fid = 147.09      # Mpc, fiducial sound horizon from DESI
+        
+        # Store reference to external background solver
+        self.background_solver = background_solver
+        
+        # Load DESI BAO data
+        self._load_desi_data()
+        
+        # For plotting
+        self.ylabel = r'BAO measurements'
+        
+    def _load_desi_data(self):
+        """Load DESI BAO measurements and covariance matrix"""
+        
+        try:
+            # Load the data file
+            data = pd.read_csv(self.data_file, delim_whitespace=True, comment="#",
+                             names=['z_eff', 'value', 'quantity'])
+            
+            # Parse the data by measurement type
+            self.z_eff = []
+            self.measurements = []
+            self.measurement_types = []
+            self.measurement_labels = []
+            
+            # Group by redshift and measurement type
+            unique_z = data['z_eff'].unique()
+            
+            for z_val in unique_z:
+                z_data = data[data['z_eff'] == z_val]
+                
+                for _, row in z_data.iterrows():
+                    self.z_eff.append(row['z_eff'])
+                    self.measurements.append(row['value'])
+                    
+                    # Parse measurement type
+                    if 'DV_over_rs' in row['quantity']:
+                        meas_type = 'DV'
+                    elif 'DM_over_rs' in row['quantity']:
+                        meas_type = 'DM'  
+                    elif 'DH_over_rs' in row['quantity']:
+                        meas_type = 'DH'
+                    else:
+                        raise ValueError(f"Unknown measurement type: {row['quantity']}")
+                    
+                    self.measurement_types.append(meas_type)
+                    self.measurement_labels.append(f'{meas_type}/rs at z={z_val:.3f}')
+            
+            self.z_eff = np.array(self.z_eff)
+            self.yvar = np.array(self.measurements)
+            self.n_data = len(self.yvar)
+            
+            # Load covariance matrix
+            if os.path.exists(self.cov_file):
+                C = np.loadtxt(self.cov_file)
+                if C.shape != (self.n_data, self.n_data):
+                    # If covariance doesn't match, use diagonal approximation
+                    warnings.warn(f"Covariance matrix shape {C.shape} doesn't match data size {self.n_data}, using 2% diagonal errors")
+                    C = np.diag((0.02 * self.yvar)**2)
+            else:
+                # Use conservative 2% errors if no covariance
+                warnings.warn("DESI covariance file not found, using 2% diagonal errors")
+                C = np.diag((0.02 * self.yvar)**2)
+                
+            self.inv_cov = np.linalg.inv(C)
+            
+        except FileNotFoundError:
+            # Create mock data if files not found
+            warnings.warn("DESI data files not found, creating mock data for testing")
+            self._create_mock_data()
+            
+    def _create_mock_data(self):
+        """Create realistic mock DESI BAO data for testing"""
+        
+        # Mock data based on your provided values
+        mock_data = [
+            (0.295, 7.94167639, 'DV'),
+            (0.510, 13.58758434, 'DM'),
+            (0.510, 21.86294686, 'DH'),
+            (0.706, 17.35069094, 'DM'),
+            (0.706, 19.45534918, 'DH'),
+            (0.934, 21.57563956, 'DM'),
+            (0.934, 17.64149464, 'DH'),
+            (1.321, 27.60085612, 'DM'),
+            (1.321, 14.17602155, 'DH'),
+            (1.484, 30.51190063, 'DM'),
+            (1.484, 12.81699964, 'DH'),
+            (2.330, 8.631545674846294, 'DH'),
+            (2.330, 38.988973961958784, 'DM')
+        ]
+        
+        self.z_eff = np.array([d[0] for d in mock_data])
+        self.yvar = np.array([d[1] for d in mock_data])
+        self.measurement_types = [d[2] for d in mock_data]
+        self.measurement_labels = [f'{d[2]}/rs at z={d[0]:.3f}' for d in mock_data]
+        self.n_data = len(self.yvar)
+        
+        # Use 2% diagonal errors for mock data
+        C = np.diag((0.02 * self.yvar)**2)
+        self.inv_cov = np.linalg.inv(C)
+        
+    def set_background_solver(self, solver):
+        """Set the external background solver function"""
+        self.background_solver = solver
+        
+    def get_pred(self, zp1, a, eq_numpy, integrated=False, **kwargs):
+        """
+        Compute predicted BAO observables
+        
+        Args:
+            zp1: 1+z array (not used directly, kept for compatibility)
+            a: Model parameters  
+            eq_numpy: Function representation (stored for reference)
+            integrated: Not used for DESI likelihood
+            **kwargs: Can contain 'H_z' and 'z_array' for direct input
+            
+        Returns:
+            Array of predicted BAO measurements matching self.yvar
+        """
+        
+        params = np.atleast_1d(a)
+        
+        # Get H(z) either from kwargs or external solver
+        if 'H_z' in kwargs and 'z_array' in kwargs:
+            H_z = kwargs['H_z']
+            z_array = kwargs['z_array']
+        elif self.background_solver is not None:
+            try:
+                # Call external solver - it should return (z_array, H_z)
+                result = self.background_solver(params)
+                if result is None or len(result) != 2:
+                    return np.full(self.n_data, np.inf)
+                z_array, H_z = result
+            except Exception:
+                return np.full(self.n_data, np.inf)
+        else:
+            # No way to compute H(z) - return infinite prediction
+            return np.full(self.n_data, np.inf)
+        
+        # Validate H(z) results
+        if (H_z is None or not np.all(np.isfinite(H_z)) or 
+            np.any(H_z <= 0) or len(H_z) != len(z_array)):
+            return np.full(self.n_data, np.inf)
+        
+        # Create interpolation function for H(z)
+        try:
+            # Ensure z_array is sorted for interpolation
+            sort_idx = np.argsort(z_array)
+            z_sorted = z_array[sort_idx]
+            H_sorted = H_z[sort_idx]
+            
+            # Check for sufficient redshift coverage
+            if z_sorted.min() > 0.01 or z_sorted.max() < self.z_eff.max():
+                return np.full(self.n_data, np.inf)
+                
+            H_interp = interp1d(z_sorted, H_sorted, kind='cubic', 
+                               bounds_error=False, fill_value='extrapolate')
+        except Exception:
+            return np.full(self.n_data, np.inf)
+        
+        predictions = []
+        
+        # Compute predictions for each measurement
+        for i, (z_val, meas_type) in enumerate(zip(self.z_eff, self.measurement_types)):
+            
+            try:
+                if meas_type == 'DM':
+                    # Comoving distance: DM = ∫[0 to z] c/H(z') dz'
+                    z_int = np.linspace(0, z_val, 50)
+                    H_int = H_interp(z_int)
+                    if not np.all(np.isfinite(H_int)) or np.any(H_int <= 0):
+                        pred = np.inf
+                    else:
+                        dc = np.trapz(self.c_km_s / H_int, z_int)
+                        pred = dc / self.rd_fid
+                        
+                elif meas_type == 'DH':
+                    # Hubble distance: DH = c/H(z)
+                    H_z_val = H_interp(z_val)
+                    if not np.isfinite(H_z_val) or H_z_val <= 0:
+                        pred = np.inf
+                    else:
+                        pred = self.c_km_s / (H_z_val * self.rd_fid)
+                        
+                elif meas_type == 'DV':
+                    # Volume-averaged distance: DV = [z*DM^2*DH]^(1/3)
+                    z_int = np.linspace(0, z_val, 200)
+                    H_int = H_interp(z_int)
+                    H_z_val = H_interp(z_val)
+                    
+                    if (not np.all(np.isfinite(H_int)) or np.any(H_int <= 0) or
+                        not np.isfinite(H_z_val) or H_z_val <= 0):
+                        pred = np.inf
+                    else:
+                        dc = np.trapz(self.c_km_s / H_int, z_int)  # Comoving distance
+                        dh = self.c_km_s / H_z_val  # Hubble distance
+                        dv = (z_val * dc**2 * dh)**(1/3)
+                        pred = dv / self.rd_fid
+                else:
+                    pred = np.inf
+                    
+                # Final validation
+                if not np.isfinite(pred) or pred <= 0:
+                    pred = np.inf
+                    
+                predictions.append(pred)
+                
+            except Exception:
+                predictions.append(np.inf)
+        
+        return np.array(predictions)
+    
+    def negloglike(self, a, eq_numpy, integrated=False, **kwargs):
+        """
+        Calculate negative log-likelihood (chi-squared/2)
+        
+        Args:
+            a: Model parameters
+            eq_numpy: Function representation 
+            integrated: Not used
+            **kwargs: Additional arguments, may contain H(z) data
+            
+        Returns:
+            Negative log-likelihood value
+        """
+        
+        try:
+            # Get predictions
+            pred = self.get_pred(None, a, eq_numpy, integrated, **kwargs)
+            
+            # Check for invalid predictions
+            if not np.all(np.isfinite(pred)):
+                return np.inf
+            
+            # Calculate chi-squared
+            diff = pred - self.yvar
+            chi2 = np.dot(diff, np.dot(self.inv_cov, diff))
+            
+            if np.isnan(chi2) or chi2 < 0:
+                return np.inf
+                
+            return 0.5 * chi2
+            
+        except Exception:
+            return np.inf
+    
+    def negloglike_direct(self, H_z, z_array, params=None):
+        """
+        Convenience method to compute likelihood directly from H(z) array
+        
+        Args:
+            H_z: Array of Hubble parameter values [km/s/Mpc]
+            z_array: Array of redshifts corresponding to H_z
+            params: Model parameters (for record keeping)
+            
+        Returns:
+            Negative log-likelihood
+        """
+        return self.negloglike(params if params is not None else [], 
+                              None, False, H_z=H_z, z_array=z_array)
+    
+    def run_sympify(self, fcn_i, tmax=5, try_integration=False):
+        """
+        Process function string for compatibility with ESR
+        
+        For DESI likelihood, the function represents the model that will be 
+        passed to the external background solver.
+        
+        Args:
+            fcn_i: String representation of the model/potential
+            tmax: Time limit (not used)
+            try_integration: Whether to try integration (not needed for DESI)
+            
+        Returns:
+            Tuple of (cleaned_string, sympy_expression, integrated_flag)
+        """
+        
+        fcn_i = fcn_i.replace('\n', '')
+        fcn_i = fcn_i.replace('\'', '')
+        
+        # Store function string for external solver
+        self.current_function_str = fcn_i
+        
+        # Create sympy expression for compatibility
+        try:
+            eq = sympy.sympify(fcn_i, locals={
+                "inv": inv, "square": square, "cube": cube, "sqrt": sqrt,
+                "log": log, "pow": pow, "x": x, "a0": a0, "a1": a1, "a2": a2
+            })
+        except Exception:
+            # If sympification fails, create a dummy expression
+            eq = x
+        
+        return fcn_i, eq, False
+    
+    def clear_data(self):
+        """Clear any cached data - not needed for DESI likelihood"""
+        pass
+    
+    def get_data_info(self):
+        """Return information about the loaded data"""
+        info = {
+            'n_measurements': self.n_data,
+            'redshift_range': (self.z_eff.min(), self.z_eff.max()),
+            'measurement_types': list(set(self.measurement_types)),
+            'redshifts': np.unique(self.z_eff).tolist()
+        }
+        return info
