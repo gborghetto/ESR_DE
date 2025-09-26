@@ -9,10 +9,11 @@ and a combination of CMB, BAO, and Supernova likelihoods.
 """
 
 from cobaya.run import run
+import sympy
 from CambESRPotential.CobayaInterfaceESR import load_esr_function_string
 import argparse
 
-def create_cobaya_info_dict(esr_functions_file, potential_function_index, esr_param_names):
+def create_cobaya_info_dict(esr_functions_file, potential_function_index, esr_sampled_params = [],esr_fixed_params=[]):
     """
     Create the Cobaya info dictionary with the necessary settings.
     This includes the theory, likelihoods, parameters, and sampler settings.
@@ -129,8 +130,8 @@ def create_cobaya_info_dict(esr_functions_file, potential_function_index, esr_pa
     }
 
     # Update info with ESR potential parameters
-    if esr_param_names:
-        for param in esr_param_names:
+    if esr_sampled_params:
+        for param in esr_sampled_params:
             info['params'][param] = {
                 "latex": param,
                 "prior": {
@@ -145,47 +146,37 @@ def create_cobaya_info_dict(esr_functions_file, potential_function_index, esr_pa
                 "proposal": 0.1
             }
 
+    if esr_fixed_params:
+        for param in esr_fixed_params:
+            info['params'][param] = 0.0  # Fixed to zero
+
     return info
-
-
-def is_function_valid(func_string: str) -> bool:
-    """
-    Analyzes a function string to determine if it's valid for a quintessence potential.
-
-    Args:
-        func_string (str): The mathematical expression as a string.
-        phi_interval (tuple): The physical interval for phi over which to check validity.
-
-    Returns:
-        bool: True if the function is valid, False otherwise.
-    """
-    # 1. Check for obviously invalid substrings before parsing
-    invalid_substrings = ['nan', 'oo', '<class', 'I'] # 'I' is sympy for imaginary unit
-    if any(sub in func_string for sub in invalid_substrings):
-        print(f"Validation failed: Function string '{func_string}' contains invalid substring.")
-        return True
-    else:
-        return False
 
 def run_single_potential(esr_functions_file, potential_function_index, resume, test, force, debug):
     """
     Run a single potential function with the given parameters.
     """
-    esr_function_string, esr_function_template, esr_param_symbols = load_esr_function_string(esr_functions_file, potential_function_index)
-    # if function is a constant (does not contain 'x') or the string has nan, skip it
+    function_dict = load_esr_function_string(esr_functions_file, potential_function_index,verbose=True)
 
-    invalid_function = is_function_valid(esr_function_string)
-    if invalid_function:
-        print(f"Skipping invalid function at index {potential_function_index}: {esr_function_string}")
+    is_valid = function_dict['valid']
+
+    if not is_valid:
+        print(f"Skipping invalid function at index {potential_function_index}")
         return
 
-    esr_param_names = [str(p) for p in esr_param_symbols]
+    esr_param_names = [str(p) for p in function_dict['param_symbols']]
+    params_to_fix = function_dict['fixed_params']
+    variable_params = function_dict['variable_params']
 
-    print(f"Using ESR potential function: {esr_function_string}, with parameters: {esr_param_names}")
+    esr_function_string = function_dict['func_string']
+
+    print(f"Using ESR potential function: {esr_function_string}, with parameters: {esr_param_names}, fixed: {params_to_fix}, variable: {variable_params}")
 
     print(f"Resume: {resume}, Test: {test}, Force: {force}, Debug: {debug}")
 
-    info = create_cobaya_info_dict(esr_functions_file, potential_function_index, esr_param_names)
+    info = create_cobaya_info_dict(esr_functions_file, potential_function_index, esr_sampled_params=variable_params, esr_fixed_params=params_to_fix)
+
+    print(info['params'])
 
     mcmc_info = {"sampler": {
             "mcmc": {
@@ -195,7 +186,7 @@ def run_single_potential(esr_functions_file, potential_function_index, resume, t
                 "Rminus1_stop": 0.1,
                 "Rminus1_cl_stop": 0.2,
                 "max_tries": 100,
-                "max_samples": 10000,
+                "max_samples": 500,
             }
         }
     }
@@ -210,13 +201,14 @@ def run_single_potential(esr_functions_file, potential_function_index, resume, t
     minimize_info = {"sampler": {
         "minimize": {
             "method": "scipy",
-            "best_of": 80,
+            "best_of": 16,
             }
         }
     }
+
     try:
         info.update(minimize_info)
-        updated_info, sampler = run(info, debug=debug,force=True, resume=resume)
+        updated_info, sampler = run(info, debug=debug,force=force, resume=resume)
     except Exception as e:
         print(f"Error during minimization run: {e}")
 

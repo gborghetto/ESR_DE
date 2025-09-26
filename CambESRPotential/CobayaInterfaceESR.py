@@ -45,8 +45,13 @@ class CambQuintessenceESR(Theory):
         """Sets up the collectors for theory requirements."""
         self._must_provide = {}
         self.collectors = {}
-        self.esr_function_string, self.esr_function_template, self.esr_param_symbols = load_esr_function_string(self.path_ESR_data, self.potential_function_idx)
-        self.esr_param_names = [str(p) for p in self.esr_param_symbols]
+        function_dict = load_esr_function_string(self.path_ESR_data, self.potential_function_idx)
+        if not function_dict['valid']:
+            raise LoggedError(self.log, f"ESR function at index {self.potential_function_idx} is invalid.")
+        self.esr_param_symbols = function_dict['param_symbols']
+        self.esr_param_names = [str(p) for p in function_dict['param_symbols']]
+        self.esr_function_string = function_dict['func_string']
+        self.esr_function_template = function_dict['expr_template']
         self.phi_vals = np.linspace(self.phi_min, self.phi_max, self.phi_steps)
         print(f"Using ESR potential function: {self.esr_function_string}, with parameters: {self.esr_param_names}")
 
@@ -126,6 +131,7 @@ class CambQuintessenceESR(Theory):
         try:
             #extract esr potential parameters from params_values_dict
             esr_params = []
+            # print(f"Parameters values dict: {params_values_dict}")
             for p in self.esr_param_names:
                 if p not in params_values_dict:
                     raise LoggedError(f"Missing potential parameter '{p}' required by ESR potential.")

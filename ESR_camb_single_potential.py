@@ -11,8 +11,7 @@ and a combination of CMB, BAO, and Supernova likelihoods.
 from cobaya.run import run
 from CambESRPotential.CobayaInterfaceESR import load_esr_function_string
 import argparse
-
-def create_cobaya_info_dict(esr_functions_file, potential_function_index, esr_param_names):
+def create_cobaya_info_dict(esr_functions_file, potential_function_index, esr_sampled_params = [],esr_fixed_params=[]):
     """
     Create the Cobaya info dictionary with the necessary settings.
     This includes the theory, likelihoods, parameters, and sampler settings.
@@ -125,12 +124,12 @@ def create_cobaya_info_dict(esr_functions_file, potential_function_index, esr_pa
         
         # Output settings
         # "output": "chains/spline_4_free_pchord", # Commented out
-        "output": f"chains/camb_esr_{runname}_compl_{complexity}_{potential_function_index}"
+        "output": f"chains/camb_esr/{runname}/compl_{complexity}/{potential_function_index}/results",
     }
 
     # Update info with ESR potential parameters
-    if esr_param_names:
-        for param in esr_param_names:
+    if esr_sampled_params:
+        for param in esr_sampled_params:
             info['params'][param] = {
                 "latex": param,
                 "prior": {
@@ -140,10 +139,14 @@ def create_cobaya_info_dict(esr_functions_file, potential_function_index, esr_pa
                 "ref": {
                     "dist": "norm",
                     "loc": 0.0,
-                    "scale": 0.1
+                    "scale": 0.2
                 },
                 "proposal": 0.1
             }
+
+    if esr_fixed_params:
+        for param in esr_fixed_params:
+            info['params'][param] = 0.0  # Fixed to zero
 
     return info
 
@@ -181,46 +184,62 @@ if __name__ == "__main__":
     # Use a predefined runname from the ESR library that includes sine functions
     runname = "core_maths"
     esr_functions_file = f'./CambESRPotential/esrfunctions/{runname}/compl_{complexity}/unique_equations_{complexity}.txt'
-    potential_function_index = 107  # Index of the ESR function to use
+    potential_function_index = 35  # Index of the ESR function to use
 
-    esr_function_string, esr_function_template, esr_param_symbols = load_esr_function_string(esr_functions_file, potential_function_index)
-    esr_param_names = [str(p) for p in esr_param_symbols]
+    """
+    Run a single potential function with the given parameters.
+    """
+    function_dict = load_esr_function_string(esr_functions_file, potential_function_index,verbose=True)
 
-    print(f"Using ESR potential function: {esr_function_string}, with parameters: {esr_param_names}")
+    is_valid = function_dict['valid']
 
-    print(f"Resume: {resume}, Test: {test}, Force: {force}, Debug: {debug}")
+    if not is_valid:
+        print(f"Skipping invalid function at index {potential_function_index}")
+    else:
+        esr_param_names = [str(p) for p in function_dict['param_symbols']]
+        params_to_fix = function_dict['fixed_params']
+        variable_params = function_dict['variable_params']
 
-    info = create_cobaya_info_dict(esr_functions_file, potential_function_index, esr_param_names)
+        esr_function_string = function_dict['func_string']
 
-    mcmc_info = {"sampler": {
-            "mcmc": {
-                "drag": False,
-                "oversample_power": 0.4,
-                "proposal_scale": 1.9,
-                "Rminus1_stop": 0.1,
-                "Rminus1_cl_stop": 0.2,
-                "max_tries": 100,
-                "max_samples": 10000,
+        print(f"Using ESR potential function: {esr_function_string}, with parameters: {esr_param_names}, fixed: {params_to_fix}, variable: {variable_params}")
+
+        print(f"Resume: {resume}, Test: {test}, Force: {force}, Debug: {debug}")
+
+        info = create_cobaya_info_dict(esr_functions_file, potential_function_index, esr_sampled_params=variable_params, esr_fixed_params=params_to_fix)
+
+        print(info['params'])
+
+        mcmc_info = {"sampler": {
+                "mcmc": {
+                    "drag": False,
+                    "oversample_power": 0.4,
+                    "proposal_scale": 1.9,
+                    "Rminus1_stop": 0.1,
+                    "Rminus1_cl_stop": 0.2,
+                    "max_tries": 100,
+                    "max_samples": 500,
+                }
             }
         }
-    }
-    info.update(mcmc_info)
+        info.update(mcmc_info)
 
-    # Run the sampler with the defined settings
-    try:
-        updated_info, sampler = run(info, resume=resume, test=test, force=force, debug=debug)
-    except Exception as e:
-        print(f"Error during Cobaya run: {e}")
-
-    if minimize:
+        # Run the sampler with the defined settings
+        try:
+            updated_info, sampler = run(info, resume=resume, test=test, force=force, debug=debug)
+        except Exception as e:
+            print(f"Error during Cobaya mcmc run: {e}")
 
         minimize_info = {"sampler": {
             "minimize": {
                 "method": "scipy",
-                "best_of": 40,
+                "best_of": 2,
                 }
             }
         }
 
-        info.update(minimize_info)
-        updated_info, sampler = run(info, debug=debug,force=True)
+        try:
+            info.update(minimize_info)
+            updated_info, sampler = run(info, debug=debug,force=force, resume=resume, test=test)
+        except Exception as e:
+            print(f"Error during minimization run: {e}")
