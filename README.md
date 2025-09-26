@@ -34,7 +34,8 @@ After all the `cobaya` runs are complete, this script is used for post-processin
 -   Ranks all the tested potential models based on a goodness-of-fit metric (e.g., the total $\chi^2$).
 -   Presents a final summary table of the top-performing models, showing the mathematical form of the potential, its best-fit parameters, and its $\chi^2$ value.
 
-#### Missing stuff
+#### Missing stuff and improvements
 
+- Better choice of basis functions suited to DE
 - Plots of the best-fit potential and cosmological evolution
 - Accounting for the expression complexity in the chi2 values.
