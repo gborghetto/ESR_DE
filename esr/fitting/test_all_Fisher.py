@@ -275,8 +275,13 @@ def main(comp, likelihood, tmax=5, print_frequency=50, try_integration=False):
         if rank == 0 and ((i == 0) or ((i+1) % print_frequency == 0)):
             print(f'{i+1} of {len(fcn_list_proc)}', flush=True)
 
+        # MOVE INFINITE LIKELIHOOD CHECK TO VERY BEGINNING
         if np.isnan(negloglike[i]) or np.isinf(negloglike[i]):
-            codelen[i]=np.nan
+            if rank == 0:
+                print(f"Skipping function {i}: infinite likelihood", flush=True)
+            codelen[i] = np.nan
+            params[i,:] = 0.
+            deriv[i,:] = 0.
             continue
 
         theta_ML = params_proc[i,:]
