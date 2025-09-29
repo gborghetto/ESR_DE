@@ -44,7 +44,7 @@ def chi2_fcn(x, likelihood, eq_numpy, integrated, signs):
             else:
                 raise ValueError
             
-    print(f"chi2_fcn called with params: {p}")
+    #print(f"chi2_fcn called with params: {p}")
             
     try:
         if hasattr(likelihood, 'bridge'):
@@ -52,7 +52,7 @@ def chi2_fcn(x, likelihood, eq_numpy, integrated, signs):
         else:
             result = likelihood.negloglike(p, eq_numpy, integrated=integrated)
         
-        print(f"chi2_fcn returning: {result}")
+        #print(f"chi2_fcn returning: {result}")
         return result
     
     except Exception as e:

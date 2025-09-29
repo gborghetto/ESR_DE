@@ -71,10 +71,10 @@ def convert_params(fcn_i, eq, integrated, theta_ML, likelihood, negloglike, max_
     
     if nparam > 0:
         def fop(x):
-            return likelihood.negloglike(x,eq_numpy, integrated=integrated)
-    else:
-        def fop(x):
-            return likelihood.negloglike([x],eq_numpy, integrated=integrated)
+            if hasattr(likelihood, 'bridge'):
+                return likelihood.negloglike(x, None, integrated=False)
+            else:
+                return likelihood.negloglike(x, eq_numpy, integrated=integrated)
 
     params = np.zeros(max_param)
     deriv = np.full(int(max_param * (max_param + 1) / 2), np.nan)

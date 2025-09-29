@@ -19,10 +19,10 @@ class QuintessenceESRBridge:
                  Omega_m=0.315,        # Total matter density
                  Omega_r=9.1e-5,       # Radiation density  
                  Omega_k=0.0,          # Curvature density
-                 phi_init=0.,         # Initial field value
-                 phidot_init=0.,     # Initial field velocity
-                 z_init=100,          # Starting redshift for integration
-                 phi_range=(-2, 2),    # Range for potential evaluation
+                 phi_init=1e-6,         # Initial field value
+                 phidot_init=1e-6,     # Initial field velocity
+                 z_init=1000,          # Starting redshift for integration
+                 phi_range=(0, 5),    # Range for potential evaluation
                  n_phi_points=50,     # Points for potential interpolation
                  z_max=3.0,            # Max redshift for H(z) output
                  n_z_points=50,      # Points for H(z) output
@@ -163,7 +163,9 @@ class QuintessenceESRBridge:
                 V_base=V_base_func,
                 dV_base_dphi=dV_base_dphi_func,
                 z_init=self.z_init,
-                fixed_amplitude=1e-8,  # Fixed amplitude
+                A_min=1e-15,
+                A_max=1e5,
+                Omega_DE_target=0.685,
                 verbose=self.verbose
             )
             
@@ -228,9 +230,9 @@ class QuintessenceDESILikelihood:
         # Set default quintessence parameters
         default_quint = {
             'phi_init': 0.1,
-            'phidot_init': 0.01,
+            'phidot_init': 0.1,
             'z_init': 1000,
-            'phi_range': (-5, 5),
+            'phi_range': (0, 5),
             'n_phi_points': 100
         }
         
@@ -390,16 +392,10 @@ class QuintessenceDESILikelihood:
             # Set up the function
             self.bridge.set_current_function(fcn_str)
             
-            # Get the solver for this function
-            if len(params) == 0:
-                return None, None
-                
-            #amplitude = abs(params[0])
-            #shape_params = params[1:] if len(params) > 1 else []
             
             # Get potential functions
             V_base_func, dV_base_dphi_func = self.bridge.esr_function_to_potential_functions(
-                fcn_str, shape_params
+                fcn_str, params
             )
             
             if V_base_func is None:
@@ -416,8 +412,12 @@ class QuintessenceDESILikelihood:
                 V_base=V_base_func,
                 dV_base_dphi=dV_base_dphi_func,
                 z_init=self.bridge.z_init,
-                fixed_amplitude=1e-8,
-                verbose=False
+                atol=1e-8,         
+                rtol=1e-8,
+                verbose = True,
+                A_min=1e-15,        
+                A_max=1e5,  
+                Omega_DE_target=0.685,
             )
             
             # Create plots

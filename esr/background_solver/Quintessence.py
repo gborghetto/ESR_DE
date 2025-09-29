@@ -20,9 +20,12 @@ class QuintessenceSolver:
         V_base,             # Base potential function V_base(phi)
         dV_base_dphi,       # Derivative of base potential
         z_init=1e2,         # Starting redshift
-
-        verbose = True,  
-        fixed_amplitude=1e-8,     
+        atol=1e-8,         
+        rtol=1e-8,
+        verbose = True,
+        A_min=1e-15,        
+        A_max=1e5,  
+        Omega_DE_target=0.685,     
     ):
         """
         Class to solve the background cosmological equations of motion for a Quintessence potential.
@@ -69,7 +72,7 @@ class QuintessenceSolver:
         self.Omega_m = Omega_m
         self.Omega_r = Omega_r
         self.Omega_k = Omega_k
-        self.Omega_phi = 1 - Omega_m - Omega_r - Omega_k
+        #self.Omega_phi = 1 - Omega_m - Omega_r - Omega_k
 
         # Critical density today in natural units (8πG=1)
         self.density_crit0 = 3 * self.H0_Gyr**2
@@ -85,12 +88,114 @@ class QuintessenceSolver:
         self.V_base = V_base
         self.dV_base_dphi = dV_base_dphi
 
-        self.amplitude = fixed_amplitude
-
+        self.atol = atol
+        self.rtol = rtol
         self.verbose = verbose
 
-        self._solve_evolution()
-    
+        self.Omega_DE_target = Omega_DE_target
+
+        try:
+            self._tune_amplitude(A_min=A_min, A_max=A_max)
+            self._solve_evolution()
+            if verbose:
+                current_omega = self.compute_current_Omega_DE()
+                print(f"Amplitude tuning successful: A={self.amplitude:.2e}, Ω_DE={current_omega:.3f}")
+        except Exception as e:
+            if verbose:
+                print(f"Amplitude tuning failed: {e}")
+            self.amplitude = A_min
+            self._solve_evolution()
+
+    def _compute_Omega_DE_residual(self, logA):
+        """Compute residual for amplitude tuning with correct normalization"""
+        self.amplitude = 10**logA
+        
+        try:
+            # Quick bounds check
+            if logA < -50 or logA > 50:
+                return 1e6
+                
+            # Solve evolution
+            y0 = [self.phi_init, self.phidot_init]
+            sol = solve_ivp(
+                self._dydN,
+                [self.N_init, 0.0],
+                y0,
+                atol=1e-6,  # Looser for speed
+                rtol=1e-6,
+                max_step=0.1,
+            )
+            
+            if not sol.success or len(sol.t) == 0:
+                return 1e6
+            
+            # Get final values (z=0)
+            phi0, phidot0 = sol.y[:, -1]
+            
+            if not (np.isfinite(phi0) and np.isfinite(phidot0)):
+                return 1e6
+                
+            # Compute DE density
+            rho_DE0 = 0.5 * phidot0**2 + self.Vphi(phi0)
+            
+            if not np.isfinite(rho_DE0) or rho_DE0 <= 0:
+                return 1e6
+            
+            # CORRECT: Compute fractional density including DE contribution
+            rho_DE0_norm = rho_DE0 / self.density_crit0
+            
+            # Total density including DE (this is E²(0) = H²(0)/H₀²)
+            total_density_norm = (
+                self.Omega_r +        # Radiation today
+                self.Omega_m +        # Matter today  
+                self.Omega_k +        # Curvature today
+                rho_DE0_norm          # DE contribution
+            )
+            
+            # Fractional DE density
+            Omega_DE0 = rho_DE0_norm / total_density_norm
+            
+            residual = Omega_DE0 - self.Omega_DE_target
+            
+            if self.verbose and abs(residual) < 0.1:
+                print(f"  A={self.amplitude:.2e}, Ω_DE={Omega_DE0:.4f}, residual={residual:.6f}")
+            
+            return residual
+            
+        except Exception as e:
+            if self.verbose:
+                print(f"  Error at A={10**logA:.2e}: {e}")
+            return 1e6
+
+    def _tune_amplitude(self, A_min=1e-15, A_max=1e5):
+        """Tune amplitude to achieve target Ω_DE"""
+        from scipy.optimize import brentq
+        
+        logA_min = np.log10(A_min)
+        logA_max = np.log10(A_max)
+        
+        try:
+            # Check if solution exists in range
+            res_min = self._compute_Omega_DE_residual(logA_min)
+            res_max = self._compute_Omega_DE_residual(logA_max)
+            
+            if res_min * res_max > 0:
+                # No sign change - use endpoint with smaller residual
+                if abs(res_min) < abs(res_max):
+                    self.amplitude = A_min
+                else:
+                    self.amplitude = A_max
+                if self.verbose:
+                    print(f"No exact solution found. Using A={self.amplitude:.2e}")
+            else:
+                # Find root using Brent's method
+                logA_opt = brentq(self._compute_Omega_DE_residual, logA_min, logA_max, xtol=1e-12)
+                self.amplitude = 10**logA_opt
+                
+        except Exception as e:
+            if self.verbose:
+                print(f"Amplitude tuning error: {e}. Using minimum value.")
+            self.amplitude = A_min    
 
     def Vphi(self, phi):
         return self.amplitude * self.V_base(phi)
@@ -141,10 +246,22 @@ class QuintessenceSolver:
             [self.N_init, 0.0],
             [self.phi_init, self.phidot_init],
             t_eval=N_vals,
-            #atol=self.atol,
-            #rtol=self.rtol,
+            atol=self.atol,
+            rtol=self.rtol,
             dense_output=True,
         )
+
+        if self.verbose:
+            print(f"Field evolution:")
+            print(f"  φ: {self.phi_init:.4f} → {sol.y[0][-1]:.4f}")
+            print(f"  φ̇: {self.phidot_init:.4f} → {sol.y[1][-1]:.4f}")
+            print(f"  V: {self.amplitude * self.V_base(self.phi_init):.2e} → {self.amplitude * self.V_base(sol.y[0][-1]):.2e}")
+            
+            # Check a few intermediate points
+            mid_idx = len(sol.y[0]) // 2
+            z_mid = self.N_to_z(sol.t[mid_idx])
+            print(f"  At z={z_mid:.1f}: φ={sol.y[0][mid_idx]:.4f}")
+
         self.solution = {
             'N': sol.t,
             'phi': sol.y[0],
@@ -212,7 +329,105 @@ class QuintessenceSolver:
         return self.H_of_N(self.z_to_N(z_arr))
     
     
+    def compute_current_Omega_DE(self):
+        """Compute current dark energy density fraction"""
+        if self.solution is None:
+            return np.nan
+            
+        # Get φ and φ̇ at z=0 (last point in solution)
+        phi0 = self.solution['phi'][-1]  
+        phidot0 = self.solution['phidot'][-1]
+        
+        # Compute current DE density
+        rho_de0 = 0.5 * phidot0**2 + self.Vphi(phi0)
+        Omega_de = rho_de0 / self.density_crit0
+        
+        return Omega_de
+    
+    def compute_Omega_DE_evolution(self, z_array):
+        """
+        Compute the evolution of dark energy density parameter Ω_DE(z)
+        
+        Args:
+            z_array: Array of redshifts
+            
+        Returns:
+            Array of Ω_DE values corresponding to z_array
+        """
+        z_array = np.atleast_1d(z_array)
+        omega_de_vals = []
+        
+        for z in z_array:
+            # Get field values at this redshift
+            phi = self.phi(z)
+            phidot = self.phidot(z)
+            
+            # Compute dark energy density
+            rho_de = 0.5 * phidot**2 + self.Vphi(phi)
+            
+            # Compute total critical density at this redshift
+            # ρ_crit(z) = ρ_crit0 * E²(z) where E²(z) includes all components
+            rho_total = (
+                self.Omega_r * (1+z)**4 +
+                self.Omega_m * (1+z)**3 +
+                self.Omega_k * (1+z)**2 +
+                rho_de / self.density_crit0
+            ) * self.density_crit0
+            
+            # Ω_DE(z) = ρ_DE(z) / ρ_total(z)
+            omega_de = rho_de / rho_total
+            omega_de_vals.append(omega_de)
+        
+        return np.array(omega_de_vals)
 
+    def get_all_density_evolution(self, z_array):
+        """
+        Compute evolution of all density parameters: Ω_DE(z), Ω_m(z), Ω_r(z)
+        
+        Args:
+            z_array: Array of redshifts
+            
+        Returns:
+            dict: Dictionary with keys 'Omega_DE', 'Omega_m', 'Omega_r', 'z'
+        """
+        z_array = np.atleast_1d(z_array)
+        omega_de_vals = []
+        omega_m_vals = []
+        omega_r_vals = []
+        omega_k_vals = []
+        
+        for z in z_array:
+            # Get DE density
+            phi = self.phi(z)
+            phidot = self.phidot(z)
+            rho_de = 0.5 * phidot**2 + self.Vphi(phi)
+            
+            # Total density (normalized by critical density today)
+            total_density_norm = (
+                self.Omega_r * (1+z)**4 +
+                self.Omega_m * (1+z)**3 +
+                self.Omega_k * (1+z)**2 +
+                rho_de / self.density_crit0
+            )
+            
+            # Individual density parameters
+            omega_de = (rho_de / self.density_crit0) / total_density_norm
+            omega_m = (self.Omega_m * (1+z)**3) / total_density_norm
+            omega_r = (self.Omega_r * (1+z)**4) / total_density_norm
+            omega_k = (self.Omega_k * (1+z)**2) / total_density_norm
+            
+            omega_de_vals.append(omega_de)
+            omega_m_vals.append(omega_m)
+            omega_r_vals.append(omega_r)
+            omega_k_vals.append(omega_k)
+        
+        return {
+            'z': z_array,
+            'Omega_DE': np.array(omega_de_vals),
+            'Omega_m': np.array(omega_m_vals),
+            'Omega_r': np.array(omega_r_vals),
+            'Omega_k': np.array(omega_k_vals)
+        }
 
     def plot_potential(self, phi_range=(-3, 3), n_points=200, ax=None, **kwargs):
         """Plot the potential V(φ) vs φ"""
@@ -271,7 +486,7 @@ class QuintessenceSolver:
         
         ax.plot(z_vals, w_vals, **kwargs)
         ax.axhline(y=-1, color='red', linestyle='--', alpha=0.7, label='Cosmological constant')
-        ax.axhline(y=-1/3, color='orange', linestyle='--', alpha=0.7, label='Phantom divide')
+        #ax.axhline(y=-1/3, color='orange', linestyle='--', alpha=0.7, label='Phantom divide')
         ax.set_xlabel('Redshift z')
         ax.set_ylabel(r'$w_{DE}(z)$')
         ax.set_title('Dark Energy Equation of State')
@@ -281,39 +496,26 @@ class QuintessenceSolver:
         return ax
 
     def plot_density_evolution(self, z_max=3, n_points=200, ax=None, **kwargs):
-        """Plot Ω_DE(z) vs redshift"""
+        """Plot Ω_DE(z), Ω_m(z), Ω_r(z) vs redshift"""
         if ax is None:
             fig, ax = plt.subplots(figsize=(8, 6))
         
         z_vals = np.linspace(0, z_max, n_points)
-        omega_de_vals = []
         
-        for z in z_vals:
-            rho_de = self.rho_de(z)
-            # Total critical density at redshift z
-            rho_crit_z = self.density_crit0 * (
-                self.Omega_r * (1+z)**4 +
-                self.Omega_m * (1+z)**3 +
-                self.Omega_k * (1+z)**2 +
-                rho_de / self.density_crit0
-            )
-            omega_de_vals.append(rho_de / rho_crit_z)
+        # Get all density evolution
+        densities = self.get_all_density_evolution(z_vals)
+        de_color = kwargs.pop('color', 'red')
+        # Plot all components
+        ax.plot(z_vals, densities['Omega_DE'], label='Dark Energy', 
+            color=de_color, **kwargs)
+        ax.plot(z_vals, densities['Omega_m'], '--', alpha=0.7, label='Matter', 
+            color='blue', linewidth=2)
+        ax.plot(z_vals, densities['Omega_r'], ':', alpha=0.7, label='Radiation', 
+            color='orange', linewidth=2)
         
-        ax.plot(z_vals, omega_de_vals, label='Dark Energy', **kwargs)
-        
-        # Add matter and radiation for comparison
-        omega_m_vals = [self.Omega_m * (1+z)**3 / (
-            self.Omega_r * (1+z)**4 + self.Omega_m * (1+z)**3 + 
-            self.Omega_k * (1+z)**2 + omega_de_vals[i]
-        ) for i, z in enumerate(z_vals)]
-        
-        omega_r_vals = [self.Omega_r * (1+z)**4 / (
-            self.Omega_r * (1+z)**4 + self.Omega_m * (1+z)**3 + 
-            self.Omega_k * (1+z)**2 + omega_de_vals[i]
-        ) for i, z in enumerate(z_vals)]
-        
-        ax.plot(z_vals, omega_m_vals, '--', alpha=0.7, label='Matter')
-        ax.plot(z_vals, omega_r_vals, ':', alpha=0.7, label='Radiation')
+        if np.any(densities['Omega_k'] != 0):
+            ax.plot(z_vals, densities['Omega_k'], '-.', alpha=0.7, label='Curvature', 
+                color='green', linewidth=2)
         
         ax.set_xlabel('Redshift z')
         ax.set_ylabel(r'$\Omega_i(z)$')
@@ -323,8 +525,9 @@ class QuintessenceSolver:
         ax.set_ylim(0, 1)
         
         return ax
+    
 
-    def plot_all(self, z_max=3, phi_range=(-3, 3), figsize=(16, 12)):
+    def plot_all(self, z_max=100, phi_range=(0, 3), figsize=(16, 12)):
         """Create a comprehensive 4-panel plot"""
         fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=figsize)
         
