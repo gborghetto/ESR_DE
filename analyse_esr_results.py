@@ -20,11 +20,35 @@ def load_esr_function_string(file_path, idx=0, verbose=False):
         return f"Function file not found at {file_path}", None, None
     except Exception as e:
         return f"Error reading function file: {e}", None, None
+    
+def load_benchmark_chi2(model_path):
+    """
+    Loads the chi2_total from a .minimum.txt file for a benchmark model.
+    """
+    try:
+        min_file_path = Path(model_path + ".minimum.txt")
+        if not min_file_path.exists():
+            print(f"Warning: Benchmark file not found at {min_file_path}")
+            return None
+            
+        data = pd.read_csv(
+            min_file_path, sep=r'\s+', comment='#',
+            header=None, engine='python'
+        )
+        with open(min_file_path, 'r') as f:
+            header_line = f.readline().strip()
+            column_names = header_line.replace('#', '').strip().split()
+        data.columns = column_names
+        
+        return data['chi2_total'].iloc[0]
+    except Exception as e:
+        print(f"Warning: Could not load benchmark model from {model_path}. Error: {e}")
+        return None
 
 # ==========================================================================
 # 2. MAIN ANALYSIS FUNCTION (Modified)
 # ==========================================================================
-def analyze_cobaya_runs(base_directory="chains/camb_esr"):
+def analyze_cobaya_runs(base_directory="chains/camb_esr",chi2_lcdm=None,chi2_cpl=None):
     """
     Analyzes all results.minimum.txt files, extracts the potential function index
     and string, and finds the top 5 runs based on chi2_total.
@@ -83,7 +107,13 @@ def analyze_cobaya_runs(base_directory="chains/camb_esr"):
                 data['source_run'] = source_id
                 data['potential_index'] = potential_index
                 data['function_string'] = func_string
-                
+
+                # --- NEW: Calculate Delta chi2 values ---
+                if chi2_lcdm is not None:
+                    data['d_chi2_lcdm'] = data['chi2_total'] - chi2_lcdm
+                if chi2_cpl is not None:
+                    data['d_chi2_cpl'] = data['chi2_total'] - chi2_cpl                
+
                 all_results.append(data)
 
             except Exception as e:
@@ -103,7 +133,7 @@ def analyze_cobaya_runs(base_directory="chains/camb_esr"):
     
     # Define the base columns we always want to see
     display_columns = [
-        'source_run', 'potential_index', 'chi2_total', 'function_string'
+        'source_run', 'potential_index', 'chi2_total', 'd_chi2_lcdm', 'd_chi2_cpl', 'function_string'
     ]
     
     # --- NEW: Dynamically find and add parameter columns ---
@@ -129,4 +159,11 @@ def analyze_cobaya_runs(base_directory="chains/camb_esr"):
 
 
 if __name__ == "__main__":
-    analyze_cobaya_runs()
+
+    # --- NEW: Load the chi-squared values for the benchmark models ---
+    lcdm_path = "./chains/LCDM_CMB_lite"
+    cpl_path = "./chains/CPL_CMB_lite"
+    chi2_lcdm = load_benchmark_chi2(lcdm_path)
+    chi2_cpl = load_benchmark_chi2(cpl_path)
+
+    analyze_cobaya_runs(chi2_lcdm=chi2_lcdm, chi2_cpl=chi2_cpl)

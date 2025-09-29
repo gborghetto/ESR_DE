@@ -180,11 +180,11 @@ if __name__ == "__main__":
     minimize = bool(args.minimize)
 
     # 1. Set up parameters for function generation
-    complexity = 6
-    # Use a predefined runname from the ESR library that includes sine functions
+    complexity = 8
+    # Use a predefined runname from the ESR library
     runname = "core_maths"
     esr_functions_file = f'./CambESRPotential/esrfunctions/{runname}/compl_{complexity}/unique_equations_{complexity}.txt'
-    potential_function_index = 35  # Index of the ESR function to use
+    potential_function_index = 687 # Index of the ESR function to use
 
     """
     Run a single potential function with the given parameters.

@@ -148,6 +148,10 @@ class CambQuintessenceESR(Theory):
             V_train = potential_dict['V_train']
             dV_train = potential_dict['dV_train']
             ddV_train = potential_dict['ddV_train']
+
+            # print("V_train:", V_train)
+            # print("dV_train:", dV_train)
+            # print("ddV_train:", ddV_train)
                                                                                
             pars = camb.set_params(
                 H0=params_values_dict['H0'], ombh2=params_values_dict['ombh2'], omch2=params_values_dict['omch2'],

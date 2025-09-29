@@ -224,4 +224,8 @@ def create_potential_table(expr_template, param_symbols, param_vals, phi_vals):
         dlogV_dphi = logV_interpolator.derivative(n=1)(phi_vals)
         dV_dphi = dlogV_dphi * V_vals[1:-1]
         ddV_dphi = V_vals[1:-1] * (logV_interpolator.derivative(n=2)(phi_vals) + dlogV_dphi**2)
+        invalid_mask_dV = np.logical_or(np.isinf(dV_dphi), np.isnan(dV_dphi))
+        invalid_mask_ddV = np.logical_or(np.isinf(ddV_dphi), np.isnan(ddV_dphi))
+        if np.any(invalid_mask_dV) or np.any(invalid_mask_ddV):
+            success = False
         return {'success': success, 'phi_train': phi_vals, 'V_train': V_vals[1:-1], 'dV_train': dV_dphi, 'ddV_train': ddV_dphi}

@@ -186,7 +186,7 @@ def run_single_potential(esr_functions_file, potential_function_index, resume, t
                 "Rminus1_stop": 0.1,
                 "Rminus1_cl_stop": 0.2,
                 "max_tries": 100,
-                "max_samples": 1600,
+                "max_samples": 1200,
             }
         }
     }
@@ -237,9 +237,9 @@ if __name__ == "__main__":
     debug = bool(args.debug)
 
     # 1. Set up parameters for function generation
-    complexity = 8
+    complexity = 5
     # Use a predefined runname from the ESR library
-    runname = "core_maths"
+    runname = "custom_DE"
     esr_functions_file = f'./CambESRPotential/esrfunctions/{runname}/compl_{complexity}/unique_equations_{complexity}.txt'
     num_esr_functions = 5448
 
