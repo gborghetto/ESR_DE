@@ -552,7 +552,7 @@ class DESILikelihood(Likelihood):
         
         super().__init__(
             '/DESI/desi_gaussian_bao_ALL_GCcomb_mean.txt',
-            '/DESI/desi_gaussian_bao_ALL_GCcomb_cov.cov', 
+            '/DESI/desi_gaussian_bao_ALL_GCcomb_cov.txt', 
             'DESI',
             data_dir=data_dir,
             fn_set = fn_set
