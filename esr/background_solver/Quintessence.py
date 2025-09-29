@@ -20,10 +20,9 @@ class QuintessenceSolver:
         V_base,             # Base potential function V_base(phi)
         dV_base_dphi,       # Derivative of base potential
         z_init=1e2,         # Starting redshift
-        atol = 1e-10,
-        rtol = 1e-10,
+
         verbose = True,  
-        manual_amplitude=None,     
+        fixed_amplitude=1e-8,     
     ):
         """
         Class to solve the background cosmological equations of motion for a Quintessence potential.
@@ -70,6 +69,7 @@ class QuintessenceSolver:
         self.Omega_m = Omega_m
         self.Omega_r = Omega_r
         self.Omega_k = Omega_k
+        self.Omega_phi = 1 - Omega_m - Omega_r - Omega_k
 
         # Critical density today in natural units (8πG=1)
         self.density_crit0 = 3 * self.H0_Gyr**2
@@ -85,17 +85,7 @@ class QuintessenceSolver:
         self.V_base = V_base
         self.dV_base_dphi = dV_base_dphi
 
-        if manual_amplitude is not None:
-            self.amplitude = manual_amplitude
-        else:
-            raise ValueError("Must provide manual_amplitude")
-
-        # Placeholder for tuned amplitude and solution
-        self.solution = None
-
-        # Store tolerances
-        self.atol = atol
-        self.rtol = rtol
+        self.amplitude = fixed_amplitude
 
         self.verbose = verbose
 
@@ -151,8 +141,8 @@ class QuintessenceSolver:
             [self.N_init, 0.0],
             [self.phi_init, self.phidot_init],
             t_eval=N_vals,
-            atol=self.atol,
-            rtol=self.rtol,
+            #atol=self.atol,
+            #rtol=self.rtol,
             dense_output=True,
         )
         self.solution = {
@@ -221,20 +211,6 @@ class QuintessenceSolver:
         z_arr = z if z is not None else self.solution['z']
         return self.H_of_N(self.z_to_N(z_arr))
     
-    def compute_current_Omega_DE(self):
-        """Compute current dark energy density fraction"""
-        if self.solution is None:
-            return np.nan
-            
-        # Get φ and φ̇ at z=0 (last point in solution)
-        phi0 = self.solution['phi'][-1]  
-        phidot0 = self.solution['phidot'][-1]
-        
-        # Compute current DE density
-        rho_de0 = 0.5 * phidot0**2 + self.Vphi(phi0)
-        Omega_de = rho_de0 / self.density_crit0
-        
-        return Omega_de
     
 
 

@@ -143,16 +143,10 @@ class QuintessenceESRBridge:
         """
  
         try:
-            if len(params) == 0:
-                return None, None
-                
-            # First parameter is amplitude
-            amplitude = abs(params[0])  # Ensure positive
-            shape_params = params[1:] if len(params) > 1 else []
             
             # Convert ESR function to shape functions
             V_base_func, dV_base_dphi_func = self.esr_function_to_potential_functions(
-                fcn_str, shape_params
+                fcn_str, params
             )
             
             if V_base_func is None:
@@ -169,7 +163,7 @@ class QuintessenceESRBridge:
                 V_base=V_base_func,
                 dV_base_dphi=dV_base_dphi_func,
                 z_init=self.z_init,
-                manual_amplitude=amplitude,  # NEW
+                fixed_amplitude=1e-8,  # Fixed amplitude
                 verbose=self.verbose
             )
             
@@ -177,17 +171,7 @@ class QuintessenceESRBridge:
             z_array = np.linspace(0, self.z_max, self.n_z_points)
             H_z_array = np.array([solver.H_of_z(z) * solver.H0 / solver.H0_Gyr for z in z_array])
             
-            # Get current Omega_DE for constraint penalty
-            current_Omega_DE = solver.compute_current_Omega_DE()
-            
-            # Validate results
-            if (not np.all(np.isfinite(H_z_array)) or 
-                np.any(H_z_array <= 0) or 
-                not np.isfinite(current_Omega_DE)):
-                return None, None
-            
-            # Return H(z) and Omega_DE for constraint
-            return z_array, H_z_array, current_Omega_DE
+            return z_array, H_z_array
             
         except Exception as e:
             if self.verbose:
@@ -410,8 +394,8 @@ class QuintessenceDESILikelihood:
             if len(params) == 0:
                 return None, None
                 
-            amplitude = abs(params[0])
-            shape_params = params[1:] if len(params) > 1 else []
+            #amplitude = abs(params[0])
+            #shape_params = params[1:] if len(params) > 1 else []
             
             # Get potential functions
             V_base_func, dV_base_dphi_func = self.bridge.esr_function_to_potential_functions(
@@ -432,7 +416,7 @@ class QuintessenceDESILikelihood:
                 V_base=V_base_func,
                 dV_base_dphi=dV_base_dphi_func,
                 z_init=self.bridge.z_init,
-                manual_amplitude=amplitude,
+                fixed_amplitude=1e-8,
                 verbose=False
             )
             
