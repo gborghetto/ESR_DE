@@ -786,25 +786,66 @@ class DESILikelihood(Likelihood):
             Negative log-likelihood value
         """
         
+    # Get H(z) and Omega_DE from external solver
+
+        params = np.atleast_1d(a) 
+        
+        if self.background_solver is not None:
+            try:
+                result = self.background_solver(params)
+                if result is None or len(result) < 2:
+                    return np.inf
+                
+                if len(result) == 3:
+                    z_array, H_z, current_Omega_DE = result
+                else:
+                    z_array, H_z = result
+                    current_Omega_DE = None
+                    
+            except Exception:
+                return np.inf
+        else:
+            return np.inf
+        
+        # Validate H(z)
+        if (H_z is None or not np.all(np.isfinite(H_z)) or 
+            np.any(H_z <= 0)):
+            return np.inf
+        
+        # Compute standard BAO likelihood
         try:
-            # Get predictions
-            pred = self.get_pred(None, a, eq_numpy, integrated, **kwargs)
+            pred = self.get_pred(None, a, eq_numpy, integrated, 
+                            H_z=H_z, z_array=z_array)
             
-            # Check for invalid predictions
             if not np.all(np.isfinite(pred)):
                 return np.inf
             
-            # Calculate chi-squared
             diff = pred - self.yvar
             chi2 = np.dot(diff, np.dot(self.inv_cov, diff))
-            
-            if np.isnan(chi2) or chi2 < 0:
-                return np.inf
-                
-            return 0.5 * chi2
+            base_likelihood = 0.5 * chi2
             
         except Exception:
             return np.inf
+        
+        # Add constraint penalty for dark energy density
+        constraint_penalty = 0.0
+        if current_Omega_DE is not None:
+            target_Omega_DE = 0.685
+            sigma_constraint = 0.02  # 2% tolerance
+            
+            deviation = (current_Omega_DE - target_Omega_DE) / sigma_constraint
+            constraint_penalty = 0.5 * deviation**2
+            
+            # Additional penalty for unphysical values
+            if current_Omega_DE < 0 or current_Omega_DE > 1:
+                constraint_penalty += 1000
+        
+        total_likelihood = base_likelihood + constraint_penalty
+        
+        if np.isnan(total_likelihood) or total_likelihood < 0:
+            return np.inf
+            
+        return total_likelihood
     
     def negloglike_direct(self, H_z, z_array, params=None):
         """

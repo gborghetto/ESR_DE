@@ -5,6 +5,8 @@ from scipy.interpolate import interp1d, UnivariateSpline
 import jax
 jax.config.update("jax_enable_x64", True)
 from interpax import CubicSpline 
+import matplotlib.pyplot as plt
+
 
 class QuintessenceSolver:
     def __init__(
@@ -18,11 +20,10 @@ class QuintessenceSolver:
         V_base,             # Base potential function V_base(phi)
         dV_base_dphi,       # Derivative of base potential
         z_init=1e2,         # Starting redshift
-        A_min = 1e-10,
-        A_max = 1e10,  
         atol = 1e-10,
         rtol = 1e-10,
-        verbose = True,       
+        verbose = True,  
+        manual_amplitude=None,     
     ):
         """
         Class to solve the background cosmological equations of motion for a Quintessence potential.
@@ -69,7 +70,6 @@ class QuintessenceSolver:
         self.Omega_m = Omega_m
         self.Omega_r = Omega_r
         self.Omega_k = Omega_k
-        self.Omega_phi_target = 1.0 - Omega_m - Omega_r - Omega_k
 
         # Critical density today in natural units (8πG=1)
         self.density_crit0 = 3 * self.H0_Gyr**2
@@ -85,6 +85,11 @@ class QuintessenceSolver:
         self.V_base = V_base
         self.dV_base_dphi = dV_base_dphi
 
+        if manual_amplitude is not None:
+            self.amplitude = manual_amplitude
+        else:
+            raise ValueError("Must provide manual_amplitude")
+
         # Placeholder for tuned amplitude and solution
         self.solution = None
 
@@ -94,10 +99,6 @@ class QuintessenceSolver:
 
         self.verbose = verbose
 
-        # Automatically tune on init
-        # if self.amplitude is None:
-        self._tune_amplitude(A_min=A_min, A_max=A_max)
-        # After tuning, solve evolution
         self._solve_evolution()
     
 
@@ -140,61 +141,7 @@ class QuintessenceSolver:
         dphidot_dN = -(3*H*phidot + self.dV_dphi(phi)) / H
         return [dphi_dN, dphidot_dN]
 
-    def _compute_Omega_phi0(self, logA):
-        """ Compute Omega_phi0 for a given log amplitude """
-        self.amplitude = 10**logA
-        y0 = [self.phi_init, self.phidot_init]
-        sol = solve_ivp(
-            self._dydN,
-            [self.N_init, 0.0],
-            y0,
-            atol=self.atol,
-            rtol=self.rtol,
-        )
-        phi0, phidot0 = sol.y[:, -1]
-        rho_phi0 = 0.5 * phidot0**2 + self.Vphi(phi0)
-        return rho_phi0 / self.density_crit0 - self.Omega_phi_target
 
-    def _tune_amplitude(self, A_min=1e-15, A_max=1e15):  # Wider range
-        """ Tune the amplitude of the potential to match Omega_phi0 """
-        A_min_log = np.log10(A_min)
-        A_max_log = np.log10(A_max)
-        
-        # Check if the function changes sign over the interval
-        f_min = self._compute_Omega_phi0(A_min_log)
-        f_max = self._compute_Omega_phi0(A_max_log)
-        
-        if f_min * f_max > 0:
-            # Same sign - try to extend the range
-            if f_min > 0:  # Both positive, need smaller amplitude
-                A_min_log = np.log10(1e-20)
-                f_min = self._compute_Omega_phi0(A_min_log)
-            else:  # Both negative, need larger amplitude  
-                A_max_log = np.log10(1e20)
-                f_max = self._compute_Omega_phi0(A_max_log)
-        
-        if f_min * f_max > 0:
-            # Still same sign - this potential can't work
-            if self.verbose:
-                print(f"Cannot tune amplitude: f({A_min_log:.1f})={f_min:.3e}, f({A_max_log:.1f})={f_max:.3e}")
-            raise ValueError("Cannot find amplitude that gives correct dark energy density")
-        
-        try:
-            self.amplitude, res = brentq(
-                self._compute_Omega_phi0,
-                A_min_log,
-                A_max_log,
-                xtol=1e-6,  # Relaxed from 1e-8
-                full_output=True,
-            )
-            # Convert back to linear scale
-            self.amplitude = 10**self.amplitude
-            if self.verbose:
-                print(f"Tuned amplitude: {self.amplitude:.3e}, converged: {res.converged}")
-        except ValueError as e:
-            if self.verbose:
-                print(f"Root finding failed: {e}")
-            raise
 
     def _solve_evolution(self, num_points=500):
         """ Solve the equations of motion for φ and φ̇ after tuning the amplitude """
@@ -273,6 +220,158 @@ class QuintessenceSolver:
         """ Return the Hubble parameter at redshift z """
         z_arr = z if z is not None else self.solution['z']
         return self.H_of_N(self.z_to_N(z_arr))
+    
+    def compute_current_Omega_DE(self):
+        """Compute current dark energy density fraction"""
+        if self.solution is None:
+            return np.nan
+            
+        # Get φ and φ̇ at z=0 (last point in solution)
+        phi0 = self.solution['phi'][-1]  
+        phidot0 = self.solution['phidot'][-1]
+        
+        # Compute current DE density
+        rho_de0 = 0.5 * phidot0**2 + self.Vphi(phi0)
+        Omega_de = rho_de0 / self.density_crit0
+        
+        return Omega_de
+    
+
+
+    def plot_potential(self, phi_range=(-3, 3), n_points=200, ax=None, **kwargs):
+        """Plot the potential V(φ) vs φ"""
+        if ax is None:
+            fig, ax = plt.subplots(figsize=(8, 6))
+        
+        phi_vals = np.linspace(phi_range[0], phi_range[1], n_points)
+        V_vals = [self.Vphi(phi) for phi in phi_vals]
+        
+        ax.plot(phi_vals, V_vals, **kwargs)
+        ax.set_xlabel(r'$\phi$')
+        ax.set_ylabel(r'$V(\phi)$')
+        ax.set_title('Quintessence Potential')
+        ax.grid(True, alpha=0.3)
+        
+        return ax
+
+    def plot_field_evolution(self, z_max=None, n_points=200, ax=None, **kwargs):
+        """Plot φ(z) and φ̇(z) vs redshift"""
+        if ax is None:
+            fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(8, 10))
+        else:
+            ax1, ax2 = ax if isinstance(ax, (list, tuple)) else (ax, None)
+        
+        if z_max is None:
+            z_max = self.N_to_z(self.solution['N'].min())
+        
+        z_vals = np.linspace(0, z_max, n_points)
+        phi_vals = [self.phi(z) for z in z_vals]
+        phidot_vals = [self.phidot(z) for z in z_vals]
+        
+        # Plot φ(z)
+        ax1.plot(z_vals, phi_vals, **kwargs)
+        ax1.set_xlabel('Redshift z')
+        ax1.set_ylabel(r'$\phi(z)$')
+        ax1.set_title('Scalar Field Evolution')
+        ax1.grid(True, alpha=0.3)
+        
+        # Plot φ̇(z)
+        if ax2 is not None:
+            ax2.plot(z_vals, phidot_vals, **kwargs)
+            ax2.set_xlabel('Redshift z')
+            ax2.set_ylabel(r'$\dot{\phi}(z)$')
+            ax2.set_title('Field Velocity Evolution')
+            ax2.grid(True, alpha=0.3)
+        
+        return (ax1, ax2) if ax2 is not None else ax1
+
+    def plot_equation_of_state(self, z_max=3, n_points=200, ax=None, **kwargs):
+        """Plot w(z) vs redshift"""
+        if ax is None:
+            fig, ax = plt.subplots(figsize=(8, 6))
+        
+        z_vals = np.linspace(0.01, z_max, n_points)  # Start slightly above 0
+        w_vals = [self.w_de(z) for z in z_vals]
+        
+        ax.plot(z_vals, w_vals, **kwargs)
+        ax.axhline(y=-1, color='red', linestyle='--', alpha=0.7, label='Cosmological constant')
+        ax.axhline(y=-1/3, color='orange', linestyle='--', alpha=0.7, label='Phantom divide')
+        ax.set_xlabel('Redshift z')
+        ax.set_ylabel(r'$w_{DE}(z)$')
+        ax.set_title('Dark Energy Equation of State')
+        ax.grid(True, alpha=0.3)
+        ax.legend()
+        
+        return ax
+
+    def plot_density_evolution(self, z_max=3, n_points=200, ax=None, **kwargs):
+        """Plot Ω_DE(z) vs redshift"""
+        if ax is None:
+            fig, ax = plt.subplots(figsize=(8, 6))
+        
+        z_vals = np.linspace(0, z_max, n_points)
+        omega_de_vals = []
+        
+        for z in z_vals:
+            rho_de = self.rho_de(z)
+            # Total critical density at redshift z
+            rho_crit_z = self.density_crit0 * (
+                self.Omega_r * (1+z)**4 +
+                self.Omega_m * (1+z)**3 +
+                self.Omega_k * (1+z)**2 +
+                rho_de / self.density_crit0
+            )
+            omega_de_vals.append(rho_de / rho_crit_z)
+        
+        ax.plot(z_vals, omega_de_vals, label='Dark Energy', **kwargs)
+        
+        # Add matter and radiation for comparison
+        omega_m_vals = [self.Omega_m * (1+z)**3 / (
+            self.Omega_r * (1+z)**4 + self.Omega_m * (1+z)**3 + 
+            self.Omega_k * (1+z)**2 + omega_de_vals[i]
+        ) for i, z in enumerate(z_vals)]
+        
+        omega_r_vals = [self.Omega_r * (1+z)**4 / (
+            self.Omega_r * (1+z)**4 + self.Omega_m * (1+z)**3 + 
+            self.Omega_k * (1+z)**2 + omega_de_vals[i]
+        ) for i, z in enumerate(z_vals)]
+        
+        ax.plot(z_vals, omega_m_vals, '--', alpha=0.7, label='Matter')
+        ax.plot(z_vals, omega_r_vals, ':', alpha=0.7, label='Radiation')
+        
+        ax.set_xlabel('Redshift z')
+        ax.set_ylabel(r'$\Omega_i(z)$')
+        ax.set_title('Density Parameter Evolution')
+        ax.grid(True, alpha=0.3)
+        ax.legend()
+        ax.set_ylim(0, 1)
+        
+        return ax
+
+    def plot_all(self, z_max=3, phi_range=(-3, 3), figsize=(16, 12)):
+        """Create a comprehensive 4-panel plot"""
+        fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=figsize)
+        
+        # Plot potential
+        self.plot_potential(phi_range=phi_range, ax=ax1, color='blue', linewidth=2)
+        
+        # Plot field evolution (just φ(z) for space)
+        z_vals = np.linspace(0, z_max, 200)
+        phi_vals = [self.phi(z) for z in z_vals]
+        ax2.plot(z_vals, phi_vals, color='green', linewidth=2)
+        ax2.set_xlabel('Redshift z')
+        ax2.set_ylabel(r'$\phi(z)$')
+        ax2.set_title('Scalar Field Evolution')
+        ax2.grid(True, alpha=0.3)
+        
+        # Plot equation of state
+        self.plot_equation_of_state(z_max=z_max, ax=ax3, color='purple', linewidth=2)
+        
+        # Plot density evolution
+        self.plot_density_evolution(z_max=z_max, ax=ax4, color='red', linewidth=2)
+        
+        plt.tight_layout()
+        return fig, (ax1, ax2, ax3, ax4)
 
 # ================== BAO OBSERVABLE CALCULATIONS ==================
 

@@ -5,6 +5,8 @@ from scipy.interpolate import UnivariateSpline
 from esr.fitting.sympy_symbols import (
     square, cube, sqrt, log, pow, x, a0, a1, a2, inv
 )
+import matplotlib.pyplot as plt
+
 
 class QuintessenceESRBridge:
     """
@@ -139,14 +141,24 @@ class QuintessenceESRBridge:
         Returns:
             tuple: (z_array, H_z_array) where H_z is in km/s/Mpc, or (None, None) if failed
         """
+ 
         try:
-            # Convert ESR function to potential functions
-            V_base_func, dV_base_dphi_func = self.esr_function_to_potential_functions(fcn_str, params)
+            if len(params) == 0:
+                return None, None
+                
+            # First parameter is amplitude
+            amplitude = abs(params[0])  # Ensure positive
+            shape_params = params[1:] if len(params) > 1 else []
             
-            if V_base_func is None or dV_base_dphi_func is None:
+            # Convert ESR function to shape functions
+            V_base_func, dV_base_dphi_func = self.esr_function_to_potential_functions(
+                fcn_str, shape_params
+            )
+            
+            if V_base_func is None:
                 return None, None
             
-            # Create quintessence solver
+            # Create solver with manual amplitude (no auto-tuning)
             solver = self.QuintessenceSolver(
                 H0=self.H0,
                 Omega_m=self.Omega_m,
@@ -157,29 +169,29 @@ class QuintessenceESRBridge:
                 V_base=V_base_func,
                 dV_base_dphi=dV_base_dphi_func,
                 z_init=self.z_init,
-                atol=1e-6,  
-                rtol=1e-6,
+                manual_amplitude=amplitude,  # NEW
                 verbose=self.verbose
             )
             
-            
-            # Get H(z) in km/s/Mpc for DESI likelihood
+            # Get H(z) and current Ω_DE for constraint
             z_array = np.linspace(0, self.z_max, self.n_z_points)
             H_z_array = np.array([solver.H_of_z(z) * solver.H0 / solver.H0_Gyr for z in z_array])
+            
+            # Get current Omega_DE for constraint penalty
+            current_Omega_DE = solver.compute_current_Omega_DE()
             
             # Validate results
             if (not np.all(np.isfinite(H_z_array)) or 
                 np.any(H_z_array <= 0) or 
-                len(H_z_array) != len(z_array)):
-                if self.verbose:
-                    print("Warning: Invalid H(z) solution")
+                not np.isfinite(current_Omega_DE)):
                 return None, None
             
-            return z_array, H_z_array
+            # Return H(z) and Omega_DE for constraint
+            return z_array, H_z_array, current_Omega_DE
             
         except Exception as e:
             if self.verbose:
-                print(f"Error solving background for function {fcn_str}: {e}")
+                print(f"Error solving background: {e}")
             return None, None
     
     def create_background_solver_function(self):
@@ -376,66 +388,135 @@ class QuintessenceDESILikelihood:
                 print(f"Error testing function {fcn_str}: {e}")
         
         return results
-
-
-# Example usage functions
-def create_quintessence_likelihood(data_dir=None, verbose=False):
-    """
-    Convenience function to create a QuintessenceDESILikelihood instance
     
-    Args:
-        data_dir: Directory containing DESI data files
-        verbose: Whether to print debug information
+    def plot_best_function(self, fcn_str, params, save_path=None, show_plot=True):
+        """
+        Plot the best-fit quintessence model
         
-    Returns:
-        QuintessenceDESILikelihood instance
-    """
-    return QuintessenceDESILikelihood(data_dir=data_dir, verbose=verbose)
+        Args:
+            fcn_str: Function string of best model
+            params: Best-fit parameters
+            save_path: Optional path to save the plot
+            show_plot: Whether to display the plot
+            
+        Returns:
+            QuintessenceSolver instance and matplotlib figure
+        """
+        try:
+            # Set up the function
+            self.bridge.set_current_function(fcn_str)
+            
+            # Get the solver for this function
+            if len(params) == 0:
+                return None, None
+                
+            amplitude = abs(params[0])
+            shape_params = params[1:] if len(params) > 1 else []
+            
+            # Get potential functions
+            V_base_func, dV_base_dphi_func = self.bridge.esr_function_to_potential_functions(
+                fcn_str, shape_params
+            )
+            
+            if V_base_func is None:
+                return None, None
+            
+            # Create solver
+            solver = self.bridge.QuintessenceSolver(
+                H0=self.bridge.H0,
+                Omega_m=self.bridge.Omega_m,
+                Omega_r=self.bridge.Omega_r,
+                Omega_k=self.bridge.Omega_k,
+                phi_init=self.bridge.phi_init,
+                phidot_init=self.bridge.phidot_init,
+                V_base=V_base_func,
+                dV_base_dphi=dV_base_dphi_func,
+                z_init=self.bridge.z_init,
+                manual_amplitude=amplitude,
+                verbose=False
+            )
+            
+            # Create plots
+            fig, axes = solver.plot_all()
+            
+            # Add title with function info
+            fig.suptitle(f'Best Quintessence Model: {fcn_str}\n'
+                        f'Parameters: {params}\n'
+                        f'Ω_DE(z=0) = {solver.compute_current_Omega_DE():.3f}', 
+                        fontsize=14, y=0.98)
+            
+            if save_path:
+                fig.savefig(save_path, dpi=300, bbox_inches='tight')
+                print(f"Plot saved to {save_path}")
+            
+            if show_plot:
+                plt.show()
+            
+            return solver, fig
+            
+        except Exception as e:
+            print(f"Error plotting function {fcn_str}: {e}")
+            return None, None
 
 
-def test_esr_function(fcn_str, params, data_dir=None, verbose=True):
-    """
-    Quick test function for ESR-generated potentials
+# # Example usage functions
+# def create_quintessence_likelihood(data_dir=None, verbose=False):
+#     """
+#     Convenience function to create a QuintessenceDESILikelihood instance
     
-    Args:
-        fcn_str: String representation of potential V(φ)
-        params: Array of parameter values
-        data_dir: Directory containing DESI data
-        verbose: Whether to print results
+#     Args:
+#         data_dir: Directory containing DESI data files
+#         verbose: Whether to print debug information
         
-    Returns:
-        dict: Test results
-    """
-    likelihood = create_quintessence_likelihood(data_dir=data_dir, verbose=verbose)
-    return likelihood.test_function(fcn_str, params)
+#     Returns:
+#         QuintessenceDESILikelihood instance
+#     """
+#     return QuintessenceDESILikelihood(data_dir=data_dir, verbose=verbose)
 
 
-# Example of how to use with ESR
-def integrate_with_esr():
-    """
-    Example showing how to integrate with ESR workflow
-    """
+# def test_esr_function(fcn_str, params, data_dir=None, verbose=True):
+#     """
+#     Quick test function for ESR-generated potentials
     
-    # Create the likelihood
-    likelihood = create_quintessence_likelihood(verbose=True)
+#     Args:
+#         fcn_str: String representation of potential V(φ)
+#         params: Array of parameter values
+#         data_dir: Directory containing DESI data
+#         verbose: Whether to print results
+        
+#     Returns:
+#         dict: Test results
+#     """
+#     likelihood = create_quintessence_likelihood(data_dir=data_dir, verbose=verbose)
+#     return likelihood.test_function(fcn_str, params)
+
+
+# # Example of how to use with ESR
+# def integrate_with_esr():
+#     """
+#     Example showing how to integrate with ESR workflow
+#     """
     
-    # Example ESR functions to test
-    test_functions = [
-        ("x**2", [1.0]),
-        ("a0 * exp(-x/a1)", [1.0, 2.0]),
-        ("a0 * x**a1", [1.0, 2.0]),
-        ("a0 + a1*x**2", [1.0, 0.5])
-    ]
+#     # Create the likelihood
+#     likelihood = create_quintessence_likelihood(verbose=True)
     
-    print("Testing ESR functions with QuintessenceDESILikelihood:")
-    print("="*60)
+#     # Example ESR functions to test
+#     test_functions = [
+#         ("x**2", [1.0]),
+#         ("a0 * exp(-x/a1)", [1.0, 2.0]),
+#         ("a0 * x**a1", [1.0, 2.0]),
+#         ("a0 + a1*x**2", [1.0, 0.5])
+#     ]
     
-    for fcn_str, params in test_functions:
-        result = likelihood.test_function(fcn_str, params)
-        print(f"Function: {fcn_str}")
-        print(f"Parameters: {params}")
-        print(f"Success: {result['success']}")
-        print(f"Likelihood: {result['likelihood']:.2f}")
-        print("-" * 40)
+#     print("Testing ESR functions with QuintessenceDESILikelihood:")
+#     print("="*60)
     
-    return likelihood
+#     for fcn_str, params in test_functions:
+#         result = likelihood.test_function(fcn_str, params)
+#         print(f"Function: {fcn_str}")
+#         print(f"Parameters: {params}")
+#         print(f"Success: {result['success']}")
+#         print(f"Likelihood: {result['likelihood']:.2f}")
+#         print("-" * 40)
+    
+#     return likelihood

@@ -43,7 +43,21 @@ def chi2_fcn(x, likelihood, eq_numpy, integrated, signs):
                 p[i] = - 10 ** x[i]
             else:
                 raise ValueError
-    return likelihood.negloglike(p,eq_numpy, integrated=integrated)
+            
+    print(f"chi2_fcn called with params: {p}")
+            
+    try:
+        if hasattr(likelihood, 'bridge'):
+            result = likelihood.negloglike(p, None, integrated=False)
+        else:
+            result = likelihood.negloglike(p, eq_numpy, integrated=integrated)
+        
+        print(f"chi2_fcn returning: {result}")
+        return result
+    
+    except Exception as e:
+        print(f"ERROR in chi2_fcn: {e}")
+        return np.inf 
     
     
 def get_functions(comp, likelihood, unique=True):
@@ -151,11 +165,14 @@ def optimise_fun(fcn_i, likelihood, tmax, pmin, pmax, comp=0, try_integration=Fa
     
     try:
         fcn_i, eq, integrated = likelihood.run_sympify(fcn_i, tmax=tmax, try_integration=try_integration)
+
+        if hasattr(likelihood, 'bridge'):
+            likelihood.bridge.set_current_function(fcn_i)
             
         if "a0" not in fcn_i:
             eq_numpy = sympy.lambdify(x, eq, modules=["numpy"])
             chi2_i = likelihood.negloglike([], eq_numpy, integrated=integrated)
-            return chi2_i, params
+            return chi2_i, params    
 
         flag_three = False
 
