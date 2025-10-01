@@ -74,7 +74,7 @@ class CambQuintessenceESR(Theory):
 
     def get_requirements(self):
         """Specifies the cosmological parameters this theory needs from the sampler + additional potential params required by the ESR potential."""
-        reqs = {'omch2': None, 'ombh2': None, 'H0': None, 'omk': None, 'mnu': None,}
+        reqs = {'omch2': None, 'ombh2': None, 'H0': None, 'omk': None, 'mnu': None, 'theta_i': None}
         if self.esr_param_names:
             potential_params = dict(zip(self.esr_param_names, [None]*len(self.esr_param_names)))
             reqs.update(potential_params)
@@ -156,7 +156,7 @@ class CambQuintessenceESR(Theory):
             pars = camb.set_params(
                 H0=params_values_dict['H0'], ombh2=params_values_dict['ombh2'], omch2=params_values_dict['omch2'],
                 mnu=params_values_dict.get('mnu', 0.06), omk=params_values_dict.get('omk', 0.0),
-                dark_energy_model='QuintessenceInterp', V_train=V_train,
+                dark_energy_model='QuintessenceInterp', V_train=V_train, theta_i=params_values_dict.get('theta_i', 0.0),
                 dV_train=dV_train, ddV_train=ddV_train, phi_train=phi_train)
 
             # 3. Perform the CAMB calculation

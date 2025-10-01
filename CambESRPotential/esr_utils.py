@@ -54,15 +54,24 @@ def identify_fixed_and_variable_parameters(expr_template, param_symbols):
     """
     # Convert all symbols to a set of strings for easy processing
     all_param_names = {str(p) for p in param_symbols}
-    
+    x = sympy.symbols('x')
+
     try:
         params_to_fix = set()
         # Loop to identify the fixed parameters
         for param in param_symbols:
             derivative = sympy.diff(expr_template, param)
-            # The parameter is a purely additive constant ONLY if the derivative is 1
-            if derivative == 1:
+            print(f"Symbols in derivative: {derivative.free_symbols}")
+            print(f"Derivative with respect to {param}: {derivative}")
+
+            # The parameter is a purely additive constant if its derivative
+            # has no dependency on 'x'.
+            if not derivative.has(x):
                 params_to_fix.add(str(param))
+
+            # The parameter is a purely additive constant ONLY if the derivative is 1
+            # if derivative == 1:
+            #     params_to_fix.add(str(param))
         
         # The variable parameters are all parameters MINUS the fixed ones
         params_to_sample = all_param_names.difference(params_to_fix)
@@ -136,7 +145,7 @@ def load_esr_function_string(file_path, idx=0,verbose=False)-> dict:
 
 def create_callable_function(expr_template, param_symbols, x_vals):
     """Create a callable function for parameter evaluation"""
-
+    # print(f"Creating callable function for expression: {expr_template} with parameters: {[str(p) for p in param_symbols]}")
     def objective(params):
         # Substitute parameters into expression
         substitutions = {param: params[i] for i, param in enumerate(param_symbols)}

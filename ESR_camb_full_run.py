@@ -9,6 +9,7 @@ and a combination of CMB, BAO, and Supernova likelihoods.
 """
 
 from cobaya.run import run
+from cobaya.mpi import get_mpi_comm, more_than_one_process
 import sympy
 from CambESRPotential.CobayaInterfaceESR import load_esr_function_string
 import argparse
@@ -83,10 +84,24 @@ def create_cobaya_info_dict(esr_functions_file, potential_function_index, esr_sa
                 },
                 "ref": {
                     "dist": "norm",
-                    "loc": 67.0,
+                    "loc": 66.6,
                     "scale": 0.1
                 },
                 "proposal": 0.05
+            },
+
+            "theta_i": {
+                "latex": r"\phi_i",
+                "prior": {
+                    "min": -0.5,
+                    "max": 0.5
+                },
+                "ref": {
+                    "dist": "norm",
+                    "loc": 0.0,
+                    "scale": 0.25
+                },
+                "proposal": 0.1
             },
 
             # Derived parameters
@@ -141,7 +156,7 @@ def create_cobaya_info_dict(esr_functions_file, potential_function_index, esr_sa
                 "ref": {
                     "dist": "norm",
                     "loc": 0.0,
-                    "scale": 0.2
+                    "scale": 0.5
                 },
                 "proposal": 0.1
             }
@@ -212,6 +227,7 @@ def run_single_potential(esr_functions_file, potential_function_index, resume, t
     except Exception as e:
         print(f"Error during minimization run: {e}")
 
+
 # Main execution block
 if __name__ == "__main__":
 
@@ -237,12 +253,21 @@ if __name__ == "__main__":
     debug = bool(args.debug)
 
     # 1. Set up parameters for function generation
-    complexity = 5
+    complexity = 4
     # Use a predefined runname from the ESR library
     runname = "custom_DE"
     esr_functions_file = f'./CambESRPotential/esrfunctions/{runname}/compl_{complexity}/unique_equations_{complexity}.txt'
-    num_esr_functions = 5448
+    with open(esr_functions_file, "r") as f:
+        all_functions = [line.strip() for line in f.readlines() if line.strip()]
+        num_esr_functions = len(all_functions)
+    print(f"Found {num_esr_functions} functions in {esr_functions_file}")
 
     for potential_function_index in range(num_esr_functions):
         print(f"\n\nRunning potential function index: {potential_function_index} of {num_esr_functions}\n")
+        # if more_than_one_process():
+        #     comm = get_mpi_comm()
+        #     comm.Barrier()
         run_single_potential(esr_functions_file, potential_function_index, resume, test, force, debug)
+        # if more_than_one_process():
+        #     comm = get_mpi_comm()
+        #     comm.Barrier()
